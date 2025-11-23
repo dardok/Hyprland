@@ -2,10 +2,9 @@
 
 #include "IHyprLayout.hpp"
 #include "../desktop/DesktopTypes.hpp"
-#include "../config/ConfigManager.hpp"
+#include "../helpers/varlist/VarList.hpp"
 #include <vector>
 #include <list>
-#include <vector>
 #include <any>
 
 enum eFullscreenMode : int8_t;
@@ -43,6 +42,8 @@ struct SMasterNodeData {
 struct SMasterWorkspaceData {
     WORKSPACEID  workspaceID = WORKSPACE_INVALID;
     eOrientation orientation = ORIENTATION_LEFT;
+    // Previously focused non-master window when `focusmaster previous` command was issued
+    PHLWINDOWREF focusMasterPrev;
 
     //
     bool operator==(const SMasterWorkspaceData& rhs) const {
@@ -72,10 +73,10 @@ class CHyprMasterLayout : public IHyprLayout {
     virtual void                     onDisable();
 
   private:
-    std::list<SMasterNodeData>        m_lMasterNodesData;
-    std::vector<SMasterWorkspaceData> m_lMasterWorkspacesData;
+    std::list<SMasterNodeData>        m_masterNodesData;
+    std::vector<SMasterWorkspaceData> m_masterWorkspacesData;
 
-    bool                              m_bForceWarps = false;
+    bool                              m_forceWarps = false;
 
     void                              buildOrientationCycleVectorFromVars(std::vector<eOrientation>& cycle, CVarList& vars);
     void                              buildOrientationCycleVectorFromEOperation(std::vector<eOrientation>& cycle);
@@ -101,7 +102,7 @@ struct std::formatter<SMasterNodeData*, CharT> : std::formatter<CharT> {
         auto out = ctx.out();
         if (!node)
             return std::format_to(out, "[Node nullptr]");
-        std::format_to(out, "[Node {:x}: workspace: {}, pos: {:j2}, size: {:j2}", (uintptr_t)node, node->workspaceID, node->position, node->size);
+        std::format_to(out, "[Node {:x}: workspace: {}, pos: {:j2}, size: {:j2}", rc<uintptr_t>(node), node->workspaceID, node->position, node->size);
         if (node->isMaster)
             std::format_to(out, ", master");
         if (!node->pWindow.expired())

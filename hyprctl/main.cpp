@@ -12,27 +12,25 @@
 #include <sys/un.h>
 #include <pwd.h>
 #include <unistd.h>
-#include <ranges>
 #include <algorithm>
 #include <csignal>
-#include <format>
+#include <ranges>
+#include <optional>
+#include <charconv>
 
 #include <iostream>
 #include <string>
 #include <print>
 #include <fstream>
-#include <string>
 #include <vector>
 #include <filesystem>
 #include <cstdarg>
-#include <sys/socket.h>
 #include <hyprutils/string/String.hpp>
-#include <cstring>
+#include <hyprutils/memory/Casts.hpp>
 using namespace Hyprutils::String;
+using namespace Hyprutils::Memory;
 
 #include "Strings.hpp"
-
-#define PAD
 
 std::string instanceSignature;
 bool        quiet = false;
@@ -42,10 +40,9 @@ struct SInstanceData {
     uint64_t    time;
     uint64_t    pid;
     std::string wlSocket;
-    bool        valid = true;
 };
 
-void log(const std::string& str) {
+void log(const std::string_view str) {
     if (quiet)
         return;
 
@@ -69,47 +66,74 @@ std::string getRuntimeDir() {
     return std::string{XDG} + "/hypr";
 }
 
+static std::optional<uint64_t> toUInt64(const std::string_view str) {
+    uint64_t value       = 0;
+    const auto [ptr, ec] = std::from_chars(str.data(), str.data() + str.size(), value);
+    if (ec != std::errc() || ptr != str.data() + str.size())
+        return std::nullopt;
+    return value;
+}
+
+static std::optional<SInstanceData> parseInstance(const std::filesystem::directory_entry& entry) {
+    if (!entry.is_directory())
+        return std::nullopt;
+
+    const auto    lockPath = entry.path() / "hyprland.lock";
+    std::ifstream ifs(lockPath);
+    if (!ifs.is_open())
+        return std::nullopt;
+
+    SInstanceData data;
+    data.id = entry.path().filename().string();
+
+    const auto first = std::string_view{data.id}.find_first_of('_');
+    const auto last  = std::string_view{data.id}.find_last_of('_');
+    if (first == std::string_view::npos || last == std::string_view::npos || last <= first)
+        return std::nullopt;
+
+    auto time = toUInt64(std::string_view{data.id}.substr(first + 1, last - first - 1));
+    if (!time)
+        return std::nullopt;
+    data.time = *time;
+
+    std::string line;
+    if (!std::getline(ifs, line))
+        return std::nullopt;
+
+    auto pid = toUInt64(std::string_view{line});
+    if (!pid)
+        return std::nullopt;
+    data.pid = *pid;
+
+    if (!std::getline(ifs, data.wlSocket))
+        return std::nullopt;
+
+    if (std::getline(ifs, line) && !line.empty())
+        return std::nullopt; // more lines than expected
+
+    return data;
+}
+
 std::vector<SInstanceData> instances() {
     std::vector<SInstanceData> result;
 
-    try {
-        if (!std::filesystem::exists(getRuntimeDir()))
-            return {};
-    } catch (std::exception& e) { return {}; }
+    std::error_code            ec;
+    const auto                 runtimeDir = getRuntimeDir();
+    if (!std::filesystem::exists(runtimeDir, ec) || ec)
+        return result;
 
-    for (const auto& el : std::filesystem::directory_iterator(getRuntimeDir())) {
-        if (!el.is_directory() || !std::filesystem::exists(el.path().string() + "/hyprland.lock"))
-            continue;
+    std::filesystem::directory_iterator it(runtimeDir, std::filesystem::directory_options::skip_permission_denied, ec);
+    if (ec)
+        return result;
 
-        // read lock
-        SInstanceData* data = &result.emplace_back();
-        data->id            = el.path().filename().string();
-
-        try {
-            data->time = std::stoull(data->id.substr(data->id.find_first_of('_') + 1, data->id.find_last_of('_') - (data->id.find_first_of('_') + 1)));
-        } catch (std::exception& e) { continue; }
-
-        // read file
-        std::ifstream ifs(el.path().string() + "/hyprland.lock");
-
-        int           i = 0;
-        for (std::string line; std::getline(ifs, line); ++i) {
-            if (i == 0) {
-                try {
-                    data->pid = std::stoull(line);
-                } catch (std::exception& e) { continue; }
-            } else if (i == 1) {
-                data->wlSocket = line;
-            } else
-                break;
-        }
-
-        ifs.close();
+    for (const auto& el : it) {
+        if (auto instance = parseInstance(el))
+            result.emplace_back(std::move(*instance));
     }
 
-    std::erase_if(result, [&](const auto& el) { return kill(el.pid, 0) != 0 && errno == ESRCH; });
+    std::erase_if(result, [](const auto& el) { return kill(el.pid, 0) != 0 && errno == ESRCH; });
 
-    std::sort(result.begin(), result.end(), [&](const auto& a, const auto& b) { return a.time < b.time; });
+    std::ranges::sort(result, {}, &SInstanceData::time);
 
     return result;
 }
@@ -151,11 +175,19 @@ int rollingRead(const int socket) {
     return 0;
 }
 
-int request(std::string arg, int minArgs = 0, bool needRoll = false) {
+int request(std::string_view arg, int minArgs = 0, bool needRoll = false) {
     const auto SERVERSOCKET = socket(AF_UNIX, SOCK_STREAM, 0);
 
-    auto       t = timeval{.tv_sec = 5, .tv_usec = 0};
-    setsockopt(SERVERSOCKET, SOL_SOCKET, SO_RCVTIMEO, &t, sizeof(struct timeval));
+    if (SERVERSOCKET < 0) {
+        log("Couldn't open a socket (1)");
+        return 1;
+    }
+
+    auto t = timeval{.tv_sec = 5, .tv_usec = 0};
+    if (setsockopt(SERVERSOCKET, SOL_SOCKET, SO_RCVTIMEO, &t, sizeof(struct timeval)) < 0) {
+        log("Couldn't set socket timeout (2)");
+        return 2;
+    }
 
     const auto ARGS = std::count(arg.begin(), arg.end(), ' ');
 
@@ -164,59 +196,53 @@ int request(std::string arg, int minArgs = 0, bool needRoll = false) {
         return -1;
     }
 
-    if (SERVERSOCKET < 0) {
-        log("Couldn't open a socket (1)");
-        return 1;
-    }
-
     if (instanceSignature.empty()) {
-        log("HYPRLAND_INSTANCE_SIGNATURE was not set! (Is Hyprland running?)");
-        return 2;
+        log("HYPRLAND_INSTANCE_SIGNATURE was not set! (Is Hyprland running?) (3)");
+        return 3;
     }
 
-    const std::string USERID = std::to_string(getUID());
-
-    sockaddr_un       serverAddress = {0};
-    serverAddress.sun_family        = AF_UNIX;
+    sockaddr_un serverAddress = {0};
+    serverAddress.sun_family  = AF_UNIX;
 
     std::string socketPath = getRuntimeDir() + "/" + instanceSignature + "/.socket.sock";
 
     strncpy(serverAddress.sun_path, socketPath.c_str(), sizeof(serverAddress.sun_path) - 1);
 
-    if (connect(SERVERSOCKET, (sockaddr*)&serverAddress, SUN_LEN(&serverAddress)) < 0) {
-        log("Couldn't connect to " + socketPath + ". (3)");
-        return 3;
+    if (connect(SERVERSOCKET, rc<sockaddr*>(&serverAddress), SUN_LEN(&serverAddress)) < 0) {
+        log("Couldn't connect to " + socketPath + ". (4)");
+        return 4;
     }
 
-    auto sizeWritten = write(SERVERSOCKET, arg.c_str(), arg.length());
+    auto sizeWritten = write(SERVERSOCKET, arg.data(), arg.size());
 
     if (sizeWritten < 0) {
-        log("Couldn't write (4)");
-        return 4;
+        log("Couldn't write (5)");
+        return 5;
     }
 
     if (needRoll)
         return rollingRead(SERVERSOCKET);
 
-    std::string reply        = "";
-    char        buffer[8192] = {0};
+    std::string      reply               = "";
+    constexpr size_t BUFFER_SIZE         = 8192;
+    char             buffer[BUFFER_SIZE] = {0};
 
-    sizeWritten = read(SERVERSOCKET, buffer, 8192);
+    sizeWritten = read(SERVERSOCKET, buffer, BUFFER_SIZE);
 
     if (sizeWritten < 0) {
         if (errno == EWOULDBLOCK)
             log("Hyprland IPC didn't respond in time\n");
-        log("Couldn't read (5)");
-        return 5;
+        log("Couldn't read (6)");
+        return 6;
     }
 
     reply += std::string(buffer, sizeWritten);
 
-    while (sizeWritten == 8192) {
-        sizeWritten = read(SERVERSOCKET, buffer, 8192);
+    while (sizeWritten == BUFFER_SIZE) {
+        sizeWritten = read(SERVERSOCKET, buffer, BUFFER_SIZE);
         if (sizeWritten < 0) {
-            log("Couldn't read (5)");
-            return 5;
+            log("Couldn't read (6)");
+            return 6;
         }
         reply += std::string(buffer, sizeWritten);
     }
@@ -228,7 +254,7 @@ int request(std::string arg, int minArgs = 0, bool needRoll = false) {
     return 0;
 }
 
-int requestHyprpaper(std::string arg) {
+int requestIPC(std::string_view filename, std::string_view arg) {
     const auto SERVERSOCKET = socket(AF_UNIX, SOCK_STREAM, 0);
 
     if (SERVERSOCKET < 0) {
@@ -244,13 +270,11 @@ int requestHyprpaper(std::string arg) {
     sockaddr_un serverAddress = {0};
     serverAddress.sun_family  = AF_UNIX;
 
-    const std::string USERID = std::to_string(getUID());
-
-    std::string       socketPath = getRuntimeDir() + "/" + instanceSignature + "/.hyprpaper.sock";
+    std::string socketPath = getRuntimeDir() + "/" + instanceSignature + "/" + filename;
 
     strncpy(serverAddress.sun_path, socketPath.c_str(), sizeof(serverAddress.sun_path) - 1);
 
-    if (connect(SERVERSOCKET, (sockaddr*)&serverAddress, SUN_LEN(&serverAddress)) < 0) {
+    if (connect(SERVERSOCKET, rc<sockaddr*>(&serverAddress), SUN_LEN(&serverAddress)) < 0) {
         log("Couldn't connect to " + socketPath + ". (3)");
         return 3;
     }
@@ -258,16 +282,16 @@ int requestHyprpaper(std::string arg) {
     arg = arg.substr(arg.find_first_of('/') + 1); // strip flags
     arg = arg.substr(arg.find_first_of(' ') + 1); // strip "hyprpaper"
 
-    auto sizeWritten = write(SERVERSOCKET, arg.c_str(), arg.length());
+    auto sizeWritten = write(SERVERSOCKET, arg.data(), arg.size());
 
     if (sizeWritten < 0) {
         log("Couldn't write (4)");
         return 4;
     }
+    constexpr size_t BUFFER_SIZE         = 8192;
+    char             buffer[BUFFER_SIZE] = {0};
 
-    char buffer[8192] = {0};
-
-    sizeWritten = read(SERVERSOCKET, buffer, 8192);
+    sizeWritten = read(SERVERSOCKET, buffer, BUFFER_SIZE);
 
     if (sizeWritten < 0) {
         log("Couldn't read (5)");
@@ -281,8 +305,16 @@ int requestHyprpaper(std::string arg) {
     return 0;
 }
 
-void batchRequest(std::string arg, bool json) {
-    std::string commands = arg.substr(arg.find_first_of(' ') + 1);
+int requestHyprpaper(std::string_view arg) {
+    return requestIPC(".hyprpaper.sock", arg);
+}
+
+int requestHyprsunset(std::string_view arg) {
+    return requestIPC(".hyprsunset.sock", arg);
+}
+
+void batchRequest(std::string_view arg, bool json) {
+    std::string commands(arg.substr(arg.find_first_of(' ') + 1));
 
     if (json) {
         RE2::GlobalReplace(&commands, ";\\s*", ";j/");
@@ -353,7 +385,7 @@ int main(int argc, char** argv) {
             parseArgs = false;
             continue;
         }
-        if (parseArgs && (ARGS[i][0] == '-') && !isNumber(ARGS[i], true) /* For stuff like -2 */) {
+        if (parseArgs && (ARGS[i][0] == '-') && !(isNumber(ARGS[i], true) || isNumber(ARGS[i].substr(0, ARGS[i].length() - 1), true)) /* For stuff like -2 or -2, */) {
             // parse
             if (ARGS[i] == "-j" && !fullArgs.contains("j")) {
                 fullArgs += "j";
@@ -385,6 +417,8 @@ int main(int argc, char** argv) {
 
                 if (cmd == "hyprpaper") {
                     std::println("{}", HYPRPAPER_HELP);
+                } else if (cmd == "hyprsunset") {
+                    std::println("{}", HYPRSUNSET_HELP);
                 } else if (cmd == "notify") {
                     std::println("{}", NOTIFY_HELP);
                 } else if (cmd == "output") {
@@ -393,6 +427,8 @@ int main(int argc, char** argv) {
                     std::println("{}", PLUGIN_HELP);
                 } else if (cmd == "setprop") {
                     std::println("{}", SETPROP_HELP);
+                } else if (cmd == "getprop") {
+                    std::println("{}", GETPROP_HELP);
                 } else if (cmd == "switchxkblayout") {
                     std::println("{}", SWITCHXKBLAYOUT_HELP);
                 } else {
@@ -443,7 +479,7 @@ int main(int argc, char** argv) {
 
         const auto INSTANCES = instances();
 
-        if (INSTANCENO < 0 || static_cast<std::size_t>(INSTANCENO) >= INSTANCES.size()) {
+        if (INSTANCENO < 0 || sc<std::size_t>(INSTANCENO) >= INSTANCES.size()) {
             log("no such instance\n");
             return 1;
         }
@@ -466,6 +502,8 @@ int main(int argc, char** argv) {
         batchRequest(fullRequest, json);
     else if (fullRequest.contains("/hyprpaper"))
         exitStatus = requestHyprpaper(fullRequest);
+    else if (fullRequest.contains("/hyprsunset"))
+        exitStatus = requestHyprsunset(fullRequest);
     else if (fullRequest.contains("/switchxkblayout"))
         exitStatus = request(fullRequest, 2);
     else if (fullRequest.contains("/seterror"))

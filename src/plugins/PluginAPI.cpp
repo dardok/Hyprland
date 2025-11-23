@@ -1,6 +1,12 @@
 #include "PluginAPI.hpp"
 #include "../Compositor.hpp"
 #include "../debug/HyprCtl.hpp"
+#include "../plugins/PluginSystem.hpp"
+#include "../managers/HookSystemManager.hpp"
+#include "../managers/LayoutManager.hpp"
+#include "../managers/eventLoop/EventLoopManager.hpp"
+#include "../config/ConfigManager.hpp"
+#include "../debug/HyprNotificationOverlay.hpp"
 #include <dlfcn.h>
 #include <filesystem>
 
@@ -11,7 +17,18 @@
 #include <sstream>
 
 APICALL const char* __hyprland_api_get_hash() {
-    return GIT_COMMIT_HASH;
+    static auto stripPatch = [](const char* ver) -> std::string {
+        std::string_view v = ver;
+        if (!v.contains('.'))
+            return std::string{v};
+
+        return std::string{v.substr(0, v.find_last_of('.'))};
+    };
+
+    static const std::string ver = (std::string{GIT_COMMIT_HASH} + "_aq_" + stripPatch(AQUAMARINE_VERSION) + "_hu_" + stripPatch(HYPRUTILS_VERSION) + "_hg_" +
+                                    stripPatch(HYPRGRAPHICS_VERSION) + "_hc_" + stripPatch(HYPRCURSOR_VERSION) + "_hlg_" + stripPatch(HYPRLANG_VERSION));
+
+    return ver.c_str();
 }
 
 APICALL SP<HOOK_CALLBACK_FN> HyprlandAPI::registerCallbackDynamic(HANDLE handle, const std::string& event, HOOK_CALLBACK_FN fn) {
@@ -21,7 +38,7 @@ APICALL SP<HOOK_CALLBACK_FN> HyprlandAPI::registerCallbackDynamic(HANDLE handle,
         return nullptr;
 
     auto PFN = g_pHookSystem->hookDynamic(event, fn, handle);
-    PLUGIN->registeredCallbacks.emplace_back(std::make_pair<>(event, WP<HOOK_CALLBACK_FN>(PFN)));
+    PLUGIN->m_registeredCallbacks.emplace_back(std::make_pair<>(event, WP<HOOK_CALLBACK_FN>(PFN)));
     return PFN;
 }
 
@@ -32,7 +49,7 @@ APICALL bool HyprlandAPI::unregisterCallback(HANDLE handle, SP<HOOK_CALLBACK_FN>
         return false;
 
     g_pHookSystem->unhook(fn);
-    std::erase_if(PLUGIN->registeredCallbacks, [&](const auto& other) { return other.second.lock() == fn; });
+    std::erase_if(PLUGIN->m_registeredCallbacks, [&](const auto& other) { return other.second.lock() == fn; });
 
     return true;
 }
@@ -50,7 +67,7 @@ APICALL bool HyprlandAPI::addLayout(HANDLE handle, const std::string& name, IHyp
     if (!PLUGIN)
         return false;
 
-    PLUGIN->registeredLayouts.push_back(layout);
+    PLUGIN->m_registeredLayouts.push_back(layout);
 
     return g_pLayoutManager->addLayout(name, layout);
 }
@@ -61,13 +78,13 @@ APICALL bool HyprlandAPI::removeLayout(HANDLE handle, IHyprLayout* layout) {
     if (!PLUGIN)
         return false;
 
-    std::erase(PLUGIN->registeredLayouts, layout);
+    std::erase(PLUGIN->m_registeredLayouts, layout);
 
     return g_pLayoutManager->removeLayout(layout);
 }
 
 APICALL bool HyprlandAPI::reloadConfig() {
-    g_pConfigManager->m_bForceReload = true;
+    g_pEventLoopManager->doLater([] { g_pConfigManager->reload(); });
     return true;
 }
 
@@ -88,7 +105,7 @@ APICALL CFunctionHook* HyprlandAPI::createFunctionHook(HANDLE handle, const void
     if (!PLUGIN)
         return nullptr;
 
-    return g_pFunctionHookSystem->initHook(handle, (void*)source, (void*)destination);
+    return g_pFunctionHookSystem->initHook(handle, const_cast<void*>(source), const_cast<void*>(destination));
 }
 
 APICALL bool HyprlandAPI::removeFunctionHook(HANDLE handle, CFunctionHook* hook) {
@@ -100,7 +117,7 @@ APICALL bool HyprlandAPI::removeFunctionHook(HANDLE handle, CFunctionHook* hook)
     return g_pFunctionHookSystem->removeHook(hook);
 }
 
-APICALL bool HyprlandAPI::addWindowDecoration(HANDLE handle, PHLWINDOW pWindow, std::unique_ptr<IHyprWindowDecoration> pDecoration) {
+APICALL bool HyprlandAPI::addWindowDecoration(HANDLE handle, PHLWINDOW pWindow, UP<IHyprWindowDecoration> pDecoration) {
     auto* const PLUGIN = g_pPluginSystem->getPluginByHandle(handle);
 
     if (!PLUGIN)
@@ -109,7 +126,7 @@ APICALL bool HyprlandAPI::addWindowDecoration(HANDLE handle, PHLWINDOW pWindow, 
     if (!validMapped(pWindow))
         return false;
 
-    PLUGIN->registeredDecorations.push_back(pDecoration.get());
+    PLUGIN->m_registeredDecorations.push_back(pDecoration.get());
 
     pWindow->addWindowDeco(std::move(pDecoration));
 
@@ -124,8 +141,8 @@ APICALL bool HyprlandAPI::removeWindowDecoration(HANDLE handle, IHyprWindowDecor
     if (!PLUGIN)
         return false;
 
-    for (auto const& w : g_pCompositor->m_vWindows) {
-        for (auto const& d : w->m_dWindowDecorations) {
+    for (auto const& w : g_pCompositor->m_windows) {
+        for (auto const& d : w->m_windowDecorations) {
             if (d.get() == pDecoration) {
                 w->removeWindowDeco(pDecoration);
                 return true;
@@ -139,7 +156,7 @@ APICALL bool HyprlandAPI::removeWindowDecoration(HANDLE handle, IHyprWindowDecor
 APICALL bool HyprlandAPI::addConfigValue(HANDLE handle, const std::string& name, const Hyprlang::CConfigValue& value) {
     auto* const PLUGIN = g_pPluginSystem->getPluginByHandle(handle);
 
-    if (!g_pPluginSystem->m_bAllowConfigVars)
+    if (!g_pPluginSystem->m_allowConfigVars)
         return false;
 
     if (!PLUGIN)
@@ -155,7 +172,7 @@ APICALL bool HyprlandAPI::addConfigValue(HANDLE handle, const std::string& name,
 APICALL bool HyprlandAPI::addConfigKeyword(HANDLE handle, const std::string& name, Hyprlang::PCONFIGHANDLERFUNC fn, Hyprlang::SHandlerOptions opts) {
     auto* const PLUGIN = g_pPluginSystem->getPluginByHandle(handle);
 
-    if (!g_pPluginSystem->m_bAllowConfigVars)
+    if (!g_pPluginSystem->m_allowConfigVars)
         return false;
 
     if (!PLUGIN)
@@ -192,9 +209,9 @@ APICALL bool HyprlandAPI::addDispatcher(HANDLE handle, const std::string& name, 
     if (!PLUGIN)
         return false;
 
-    PLUGIN->registeredDispatchers.push_back(name);
+    PLUGIN->m_registeredDispatchers.push_back(name);
 
-    g_pKeybindManager->m_mDispatchers[name] = [handler](std::string arg1) -> SDispatchResult {
+    g_pKeybindManager->m_dispatchers[name] = [handler](std::string arg1) -> SDispatchResult {
         handler(arg1);
         return {};
     };
@@ -208,9 +225,9 @@ APICALL bool HyprlandAPI::addDispatcherV2(HANDLE handle, const std::string& name
     if (!PLUGIN)
         return false;
 
-    PLUGIN->registeredDispatchers.push_back(name);
+    PLUGIN->m_registeredDispatchers.push_back(name);
 
-    g_pKeybindManager->m_mDispatchers[name] = handler;
+    g_pKeybindManager->m_dispatchers[name] = handler;
 
     return true;
 }
@@ -221,8 +238,8 @@ APICALL bool HyprlandAPI::removeDispatcher(HANDLE handle, const std::string& nam
     if (!PLUGIN)
         return false;
 
-    std::erase_if(g_pKeybindManager->m_mDispatchers, [&](const auto& other) { return other.first == name; });
-    std::erase_if(PLUGIN->registeredDispatchers, [&](const auto& other) { return other == name; });
+    std::erase_if(g_pKeybindManager->m_dispatchers, [&](const auto& other) { return other.first == name; });
+    std::erase_if(PLUGIN->m_registeredDispatchers, [&](const auto& other) { return other == name; });
 
     return true;
 }
@@ -295,7 +312,7 @@ APICALL std::vector<SFunctionMatch> HyprlandAPI::findFunctionsByName(HANDLE hand
 #endif
     };
     u_int  miblen        = sizeof(mib) / sizeof(mib[0]);
-    char   exe[PATH_MAX] = "";
+    char   exe[PATH_MAX] = "/nonexistent";
     size_t sz            = sizeof(exe);
     sysctl(mib, miblen, &exe, &sz, NULL, 0);
     const auto FPATH = std::filesystem::canonical(exe);
@@ -379,7 +396,7 @@ APICALL SP<SHyprCtlCommand> HyprlandAPI::registerHyprCtlCommand(HANDLE handle, S
         return nullptr;
 
     auto PTR = g_pHyprCtl->registerCommand(cmd);
-    PLUGIN->registeredHyprctlCommands.push_back(PTR);
+    PLUGIN->m_registeredHyprctlCommands.push_back(PTR);
     return PTR;
 }
 
@@ -390,7 +407,7 @@ APICALL bool HyprlandAPI::unregisterHyprCtlCommand(HANDLE handle, SP<SHyprCtlCom
     if (!PLUGIN)
         return false;
 
-    std::erase(PLUGIN->registeredHyprctlCommands, cmd);
+    std::erase(PLUGIN->m_registeredHyprctlCommands, cmd);
     g_pHyprCtl->unregisterCommand(cmd);
 
     return true;

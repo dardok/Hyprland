@@ -8,7 +8,7 @@
 #include <xkbcommon/xkbcommon.h>
 #include "../devices/IPointer.hpp"
 #include "eventLoop/EventLoopTimer.hpp"
-#include "../helpers/Timer.hpp"
+#include "../helpers/time/Timer.hpp"
 
 class CInputManager;
 class CConfigManager;
@@ -17,28 +17,39 @@ class IKeyboard;
 
 enum eMouseBindMode : int8_t;
 
+struct SSubmap {
+    std::string name  = "";
+    std::string reset = "";
+    bool        operator==(const SSubmap& other) const {
+        return name == other.name;
+    }
+};
+
 struct SKeybind {
-    std::string            key            = "";
-    std::set<xkb_keysym_t> sMkKeys        = {};
-    uint32_t               keycode        = 0;
-    bool                   catchAll       = false;
-    uint32_t               modmask        = 0;
-    std::set<xkb_keysym_t> sMkMods        = {};
-    std::string            handler        = "";
-    std::string            arg            = "";
-    bool                   locked         = false;
-    std::string            submap         = "";
-    std::string            description    = "";
-    bool                   release        = false;
-    bool                   repeat         = false;
-    bool                   longPress      = false;
-    bool                   mouse          = false;
-    bool                   nonConsuming   = false;
-    bool                   transparent    = false;
-    bool                   ignoreMods     = false;
-    bool                   multiKey       = false;
-    bool                   hasDescription = false;
-    bool                   dontInhibit    = false;
+    std::string            key             = "";
+    std::set<xkb_keysym_t> sMkKeys         = {};
+    uint32_t               keycode         = 0;
+    bool                   catchAll        = false;
+    uint32_t               modmask         = 0;
+    std::set<xkb_keysym_t> sMkMods         = {};
+    std::string            handler         = "";
+    std::string            arg             = "";
+    bool                   locked          = false;
+    SSubmap                submap          = {};
+    std::string            description     = "";
+    bool                   release         = false;
+    bool                   repeat          = false;
+    bool                   longPress       = false;
+    bool                   mouse           = false;
+    bool                   nonConsuming    = false;
+    bool                   transparent     = false;
+    bool                   ignoreMods      = false;
+    bool                   multiKey        = false;
+    bool                   hasDescription  = false;
+    bool                   dontInhibit     = false;
+    bool                   click           = false;
+    bool                   drag            = false;
+    bool                   submapUniversal = false;
 
     // DO NOT INITIALIZE
     bool shadowed = false;
@@ -61,7 +72,8 @@ struct SPressedKeyWithMods {
     uint32_t     keycode            = 0;
     uint32_t     modmaskAtPressTime = 0;
     bool         sent               = false;
-    std::string  submapAtPress      = "";
+    SSubmap      submapAtPress      = {};
+    Vector2D     mousePosAtPress    = {};
 };
 
 struct SParsedKey {
@@ -95,52 +107,55 @@ class CKeybindManager {
     uint32_t                                                                     keycodeToModifier(xkb_keycode_t);
     void                                                                         clearKeybinds();
     void                                                                         shadowKeybinds(const xkb_keysym_t& doesntHave = 0, const uint32_t doesntHaveCode = 0);
-    std::string                                                                  getCurrentSubmap();
+    SSubmap                                                                      getCurrentSubmap();
 
-    std::unordered_map<std::string, std::function<SDispatchResult(std::string)>> m_mDispatchers;
+    std::unordered_map<std::string, std::function<SDispatchResult(std::string)>> m_dispatchers;
 
-    bool                                                                         m_bGroupsLocked = false;
+    bool                                                                         m_groupsLocked = false;
 
-    std::vector<SP<SKeybind>>                                                    m_vKeybinds;
+    std::vector<SP<SKeybind>>                                                    m_keybinds;
 
-    //since we cant find keycode through keyname in xkb:
+    //since we can't find keycode through keyname in xkb:
     //on sendshortcut call, we once search for keyname (e.g. "g") the correct keycode (e.g. 42)
     //and cache it in this map to make sendshortcut calls faster
     //we also store the keyboard pointer (in the string) to differentiate between different keyboard (layouts)
-    std::unordered_map<std::string, xkb_keycode_t> m_mKeyToCodeCache;
+    std::unordered_map<std::string, xkb_keycode_t> m_keyToCodeCache;
 
     static SDispatchResult                         changeMouseBindMode(const eMouseBindMode mode);
 
   private:
-    std::vector<SPressedKeyWithMods> m_dPressedKeys;
+    std::vector<SPressedKeyWithMods> m_pressedKeys;
 
-    inline static std::string        m_szCurrentSelectedSubmap = "";
+    inline static SSubmap            m_currentSelectedSubmap = {};
 
-    std::vector<WP<SKeybind>>        m_vActiveKeybinds;
-    WP<SKeybind>                     m_pLastLongPressKeybind;
-    SP<CEventLoopTimer>              m_pLongPressTimer, m_pRepeatKeyTimer;
+    std::vector<WP<SKeybind>>        m_activeKeybinds;
+    WP<SKeybind>                     m_lastLongPressKeybind;
 
-    uint32_t                         m_uTimeLastMs    = 0;
-    uint32_t                         m_uLastCode      = 0;
-    uint32_t                         m_uLastMouseCode = 0;
+    SP<CEventLoopTimer>              m_longPressTimer;
+    SP<CEventLoopTimer>              m_repeatKeyTimer;
+    uint32_t                         m_repeatKeyRate = 50;
 
-    std::vector<WP<SKeybind>>        m_vPressedSpecialBinds;
+    uint32_t                         m_timeLastMs    = 0;
+    uint32_t                         m_lastCode      = 0;
+    uint32_t                         m_lastMouseCode = 0;
 
-    int                              m_iPassPressed = -1; // used for pass
+    std::vector<WP<SKeybind>>        m_pressedSpecialBinds;
 
-    CTimer                           m_tScrollTimer;
+    int                              m_passPressed = -1; // used for pass
 
-    SDispatchResult                  handleKeybinds(const uint32_t, const SPressedKeyWithMods&, bool);
+    CTimer                           m_scrollTimer;
 
-    std::set<xkb_keysym_t>           m_sMkKeys = {};
-    std::set<xkb_keysym_t>           m_sMkMods = {};
+    SDispatchResult                  handleKeybinds(const uint32_t, const SPressedKeyWithMods&, bool, SP<IKeyboard>);
+
+    std::set<xkb_keysym_t>           m_mkKeys = {};
+    std::set<xkb_keysym_t>           m_mkMods = {};
     eMultiKeyCase                    mkBindMatches(const SP<SKeybind>);
     eMultiKeyCase                    mkKeysymSetMatches(const std::set<xkb_keysym_t>, const std::set<xkb_keysym_t>);
 
     bool                             handleInternalKeybinds(xkb_keysym_t);
     bool                             handleVT(xkb_keysym_t);
 
-    xkb_state*                       m_pXKBTranslationState = nullptr;
+    xkb_state*                       m_xkbTranslationState = nullptr;
 
     void                             updateXKBTranslationState();
     bool                             ensureMouseBindState();
@@ -148,8 +163,8 @@ class CKeybindManager {
     static bool                      tryMoveFocusToMonitor(PHLMONITOR monitor);
     static void                      moveWindowOutOfGroup(PHLWINDOW pWindow, const std::string& dir = "");
     static void                      moveWindowIntoGroup(PHLWINDOW pWindow, PHLWINDOW pWindowInDirection);
-    static void                      switchToWindow(PHLWINDOW PWINDOWTOCHANGETO);
-    static uint64_t                  spawnRawProc(std::string, PHLWORKSPACE pInitialWorkspace);
+    static void                      switchToWindow(PHLWINDOW PWINDOWTOCHANGETO, bool preserveFocusHistory = false);
+    static uint64_t                  spawnRawProc(std::string, PHLWORKSPACE pInitialWorkspace, const std::string& execRuleToken = "");
     static uint64_t                  spawnWithRules(std::string, PHLWORKSPACE pInitialWorkspace);
 
     // -------------- Dispatchers -------------- //
@@ -199,9 +214,11 @@ class CKeybindManager {
     static SDispatchResult circleNext(std::string);
     static SDispatchResult focusWindow(std::string);
     static SDispatchResult tagWindow(std::string);
+    static SDispatchResult toggleSwallow(std::string);
     static SDispatchResult setSubmap(std::string);
     static SDispatchResult pass(std::string);
     static SDispatchResult sendshortcut(std::string);
+    static SDispatchResult sendkeystate(std::string);
     static SDispatchResult layoutmsg(std::string);
     static SDispatchResult dpms(std::string);
     static SDispatchResult swapnext(std::string);
@@ -221,6 +238,7 @@ class CKeybindManager {
     static SDispatchResult global(std::string);
     static SDispatchResult event(std::string);
     static SDispatchResult setProp(std::string);
+    static SDispatchResult forceIdle(std::string);
 
     friend class CCompositor;
     friend class CInputManager;
@@ -229,4 +247,4 @@ class CKeybindManager {
     friend class CPointerManager;
 };
 
-inline std::unique_ptr<CKeybindManager> g_pKeybindManager;
+inline UP<CKeybindManager> g_pKeybindManager;

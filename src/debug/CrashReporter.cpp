@@ -6,6 +6,7 @@
 #include <cerrno>
 #include <sys/stat.h>
 #include <filesystem>
+#include "../helpers/MiscFunctions.hpp"
 
 #include "../plugins/PluginSystem.hpp"
 #include "../signal-safe.hpp"
@@ -108,9 +109,6 @@ void NCrashReporter::createAndSaveCrash(int sig) {
     finalCrashReport += "\nDate: ";
     finalCrashReport += GIT_COMMIT_DATE;
     finalCrashReport += "\nFlags:\n";
-#ifdef LEGACY_RENDERER
-    finalCrashReport += "legacyrenderer\n";
-#endif
 #if ISDEBUG
     finalCrashReport += "debug\n";
 #endif
@@ -129,11 +127,11 @@ void NCrashReporter::createAndSaveCrash(int sig) {
         for (size_t i = 0; i < count; i++) {
             auto p = plugins[i];
             finalCrashReport += '\t';
-            finalCrashReport += p->name;
+            finalCrashReport += p->m_name;
             finalCrashReport += " (";
-            finalCrashReport += p->author;
+            finalCrashReport += p->m_author;
             finalCrashReport += ") ";
-            finalCrashReport += p->version;
+            finalCrashReport += p->m_version;
             finalCrashReport += '\n';
         }
 
@@ -167,6 +165,10 @@ void NCrashReporter::createAndSaveCrash(int sig) {
     finalCrashReport += "\n\nos-release:\n";
     finalCrashReport.writeCmdOutput("cat /etc/os-release | sed 's/^/\t/'");
 
+    finalCrashReport += '\n';
+    finalCrashReport += getBuiltSystemLibraryNames();
+    finalCrashReport += '\n';
+
     // dladdr1()/backtrace_symbols()/this entire section allocates, and hence is NOT async-signal-safe.
     // Make sure that we save the current known crash report information,
     // so that if we are caught in a deadlock during a call to malloc(),
@@ -191,7 +193,7 @@ void NCrashReporter::createAndSaveCrash(int sig) {
 #endif
     };
     u_int  miblen        = sizeof(mib) / sizeof(mib[0]);
-    char   exe[PATH_MAX] = "";
+    char   exe[PATH_MAX] = "/nonexistent";
     size_t sz            = sizeof(exe);
     sysctl(mib, miblen, &exe, &sz, NULL, 0);
     const auto FPATH = std::filesystem::canonical(exe);
@@ -208,8 +210,8 @@ void NCrashReporter::createAndSaveCrash(int sig) {
         // convert in memory address to VMA address
         Dl_info          info;
         struct link_map* linkMap;
-        dladdr1((void*)CALLSTACK[i].adr, &info, (void**)&linkMap, RTLD_DL_LINKMAP);
-        size_t vmaAddr = (size_t)CALLSTACK[i].adr - linkMap->l_addr;
+        dladdr1(CALLSTACK[i].adr, &info, rc<void**>(&linkMap), RTLD_DL_LINKMAP);
+        size_t vmaAddr = rc<size_t>(CALLSTACK[i].adr) - linkMap->l_addr;
 #else
         // musl doesn't define dladdr1
         size_t vmaAddr = (size_t)CALLSTACK[i].adr;
@@ -241,5 +243,5 @@ void NCrashReporter::createAndSaveCrash(int sig) {
 
     finalCrashReport += "\n\nLog tail:\n";
 
-    finalCrashReport += std::string_view(Debug::rollingLog).substr(Debug::rollingLog.find('\n') + 1);
+    finalCrashReport += std::string_view(Debug::m_rollingLog).substr(Debug::m_rollingLog.find('\n') + 1);
 }

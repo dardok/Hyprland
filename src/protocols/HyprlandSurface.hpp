@@ -1,6 +1,6 @@
 #pragma once
 
-#include <memory>
+#include <hyprutils/math/Region.hpp>
 #include <vector>
 #include <unordered_map>
 #include "WaylandProtocol.hpp"
@@ -18,16 +18,18 @@ class CHyprlandSurface {
     void setResource(SP<CHyprlandSurfaceV1> resource);
 
   private:
-    SP<CHyprlandSurfaceV1> m_pResource;
-    WP<CWLSurfaceResource> m_pSurface;
-    float                  m_fOpacity = 1.0;
+    SP<CHyprlandSurfaceV1> m_resource;
+    WP<CWLSurfaceResource> m_surface;
+    float                  m_opacity              = 1.0;
+    bool                   m_visibleRegionChanged = false;
+    CRegion                m_visibleRegion;
 
     void                   destroy();
 
     struct {
         CHyprSignalListener surfaceCommitted;
         CHyprSignalListener surfaceDestroyed;
-    } listeners;
+    } m_listeners;
 
     friend class CHyprlandSurfaceProtocol;
 };
@@ -43,8 +45,8 @@ class CHyprlandSurfaceProtocol : public IWaylandProtocol {
     void                                                             destroySurface(CHyprlandSurface* surface);
     void                                                             getSurface(CHyprlandSurfaceManagerV1* manager, uint32_t id, SP<CWLSurfaceResource> surface);
 
-    std::vector<UP<CHyprlandSurfaceManagerV1>>                       m_vManagers;
-    std::unordered_map<WP<CWLSurfaceResource>, UP<CHyprlandSurface>> m_mSurfaces;
+    std::vector<UP<CHyprlandSurfaceManagerV1>>                       m_managers;
+    std::unordered_map<WP<CWLSurfaceResource>, UP<CHyprlandSurface>> m_surfaces;
 
     friend class CHyprlandSurface;
 };

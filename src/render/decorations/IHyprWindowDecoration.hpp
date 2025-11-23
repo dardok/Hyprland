@@ -33,7 +33,7 @@ class CDecorationPositioner;
 class IHyprWindowDecoration {
   public:
     IHyprWindowDecoration(PHLWINDOW);
-    virtual ~IHyprWindowDecoration() = 0;
+    virtual ~IHyprWindowDecoration() = default;
 
     virtual SDecorationPositioningInfo getPositioningInfo() = 0;
 
@@ -56,7 +56,7 @@ class IHyprWindowDecoration {
     virtual std::string                getDisplayName();
 
   private:
-    PHLWINDOWREF m_pWindow;
+    PHLWINDOWREF m_window;
 
     friend class CDecorationPositioner;
 };

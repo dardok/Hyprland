@@ -3,8 +3,8 @@
 #include <string>
 #include "../defines.hpp"
 #include "WLSurface.hpp"
+#include "rule/layerRule/LayerRuleApplicator.hpp"
 #include "../helpers/AnimatedVariable.hpp"
-#include "LayerRule.hpp"
 
 class CLayerShellResource;
 
@@ -18,55 +18,45 @@ class CLayerSurface {
   public:
     ~CLayerSurface();
 
-    void                    applyRules();
-    void                    startAnimation(bool in, bool instant = false);
     bool                    isFadedOut();
     int                     popupsCount();
 
-    PHLANIMVAR<Vector2D>    realPosition;
-    PHLANIMVAR<Vector2D>    realSize;
-    PHLANIMVAR<float>       alpha;
+    PHLANIMVAR<Vector2D>    m_realPosition;
+    PHLANIMVAR<Vector2D>    m_realSize;
+    PHLANIMVAR<float>       m_alpha;
 
-    WP<CLayerShellResource> layerSurface;
-    wl_list                 link;
+    WP<CLayerShellResource> m_layerSurface;
 
     // the header providing the enum type cannot be imported here
-    int                        interactivity = 0;
+    int                                     m_interactivity = 0;
 
-    SP<CWLSurface>             surface;
+    SP<CWLSurface>                          m_surface;
 
-    bool                       mapped = false;
-    uint32_t                   layer  = 0;
+    bool                                    m_mapped = false;
+    uint32_t                                m_layer  = 0;
 
-    PHLMONITORREF              monitor;
+    PHLMONITORREF                           m_monitor;
 
-    bool                       fadingOut     = false;
-    bool                       readyToDelete = false;
-    bool                       noProcess     = false;
-    bool                       noAnimations  = false;
+    bool                                    m_fadingOut     = false;
+    bool                                    m_readyToDelete = false;
+    bool                                    m_noProcess     = false;
 
-    bool                       forceBlur        = false;
-    bool                       forceBlurPopups  = false;
-    int64_t                    xray             = -1;
-    bool                       ignoreAlpha      = false;
-    float                      ignoreAlphaValue = 0.f;
-    bool                       dimAround        = false;
-    int64_t                    order            = 0;
+    UP<Desktop::Rule::CLayerRuleApplicator> m_ruleApplicator;
 
-    std::optional<std::string> animationStyle;
+    PHLLSREF                                m_self;
 
-    PHLLSREF                   self;
+    CBox                                    m_geometry = {0, 0, 0, 0};
+    Vector2D                                m_position;
+    std::string                             m_namespace = "";
+    UP<CPopup>                              m_popupHead;
 
-    CBox                       geometry = {0, 0, 0, 0};
-    Vector2D                   position;
-    std::string                szNamespace = "";
-    std::unique_ptr<CPopup>    popupHead;
+    pid_t                                   getPID();
 
-    void                       onDestroy();
-    void                       onMap();
-    void                       onUnmap();
-    void                       onCommit();
-    MONITORID                  monitorID();
+    void                                    onDestroy();
+    void                                    onMap();
+    void                                    onUnmap();
+    void                                    onCommit();
+    MONITORID                               monitorID();
 
   private:
     struct {
@@ -74,12 +64,32 @@ class CLayerSurface {
         CHyprSignalListener map;
         CHyprSignalListener unmap;
         CHyprSignalListener commit;
-    } listeners;
+    } m_listeners;
 
     void registerCallbacks();
 
     // For the list lookup
     bool operator==(const CLayerSurface& rhs) const {
-        return layerSurface == rhs.layerSurface && monitor == rhs.monitor;
+        return m_layerSurface == rhs.m_layerSurface && m_monitor == rhs.m_monitor;
     }
 };
+
+inline bool valid(PHLLS l) {
+    return l;
+}
+
+inline bool valid(PHLLSREF l) {
+    return l;
+}
+
+inline bool validMapped(PHLLS l) {
+    if (!valid(l))
+        return false;
+    return l->m_mapped;
+}
+
+inline bool validMapped(PHLLSREF l) {
+    if (!valid(l))
+        return false;
+    return l->m_mapped;
+}

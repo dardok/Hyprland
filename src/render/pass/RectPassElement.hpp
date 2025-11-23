@@ -10,6 +10,7 @@ class CRectPassElement : public IPassElement {
         float      roundingPower = 2.0f;
         bool       blur = false, xray = false;
         float      blurA = 1.F;
+        CBox       clipBox;
     };
 
     CRectPassElement(const SRectData& data);
@@ -26,5 +27,5 @@ class CRectPassElement : public IPassElement {
     }
 
   private:
-    SRectData data;
+    SRectData m_data;
 };

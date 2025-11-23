@@ -1,6 +1,5 @@
 #pragma once
 
-#include <memory>
 #include "../helpers/signal/Signal.hpp"
 #include "../helpers/memory/Memory.hpp"
 #include "../macros.hpp"
@@ -17,21 +16,21 @@ class CXWM;
 
 class CXWayland {
   public:
-    CXWayland(const bool enabled);
+    CXWayland(const bool wantsEnabled);
 
 #ifndef NO_XWAYLAND
-    std::unique_ptr<CXWaylandServer> pServer;
-    std::unique_ptr<CXWM>            pWM;
+    UP<CXWaylandServer> m_server;
+    UP<CXWM>            m_wm;
 #endif
+    bool enabled();
 
     void setCursor(unsigned char* pixData, uint32_t stride, const Vector2D& size, const Vector2D& hotspot);
 
-    struct {
-        CSignal newSurface;
-    } events;
+  private:
+    bool m_enabled = false;
 };
 
-inline std::unique_ptr<CXWayland>                g_pXWayland;
+inline UP<CXWayland>                             g_pXWayland;
 
 inline std::unordered_map<std::string, uint32_t> HYPRATOMS = {
 #ifndef NO_XWAYLAND
@@ -80,6 +79,7 @@ inline std::unordered_map<std::string, uint32_t> HYPRATOMS = {
     HYPRATOM("_NET_WORKAREA"),
     HYPRATOM("_NET_WM_ICON"),
     HYPRATOM("_NET_WM_CM_S0"),
+    HYPRATOM("_NET_WM_PING"),
     HYPRATOM("WM_PROTOCOLS"),
     HYPRATOM("WM_HINTS"),
     HYPRATOM("WM_DELETE_WINDOW"),

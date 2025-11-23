@@ -22,6 +22,7 @@ commands:
     getoption <option>  → Gets the config option status (values)
     globalshortcuts     → Lists all global shortcuts
     hyprpaper ...       → Issue a hyprpaper request
+    hyprsunset ...      → Issue a hyprsunset request
     instances           → Lists all running instances of Hyprland with
                           their info
     keyword <name> <value> → Issue a keyword to call a config keyword
@@ -48,6 +49,7 @@ commands:
                           the same format as in colors in config. Will reset
                           when Hyprland's config is reloaded
     setprop ...         → Sets a window property
+    getprop ...         → Gets a window property
     splash              → Get the current splash
     switchxkblayout ... → Sets the xkb layout index for a keyboard
     systeminfo          → Get system info
@@ -77,6 +79,16 @@ requests:
     preload <path>  → Preloads image
     unload <path>   → Unloads image. Pass 'all' as path to unload all images
     wallpaper       → Issue a wallpaper to call a config wallpaper dynamically
+
+flags:
+    See 'hyprctl --help')#";
+
+const std::string_view HYPRSUNSET_HELP = R"#(usage: hyprctl [flags] hyprsunset <request>
+
+requests:
+    temperature <temp> → Enable blue-light filter
+    identity           → Disable blue-light filter
+    gamma <gamma>      → Enable gamma filter
 
 flags:
     See 'hyprctl --help')#";
@@ -135,7 +147,7 @@ regex:
     Regular expression by which a window will be searched
 
 property:
-    See https://wiki.hyprland.org/Configuring/Using-hyprctl/#setprop for list
+    See https://wiki.hypr.land/Configuring/Using-hyprctl/#setprop for list
     of properties
 
 value:
@@ -144,6 +156,18 @@ value:
 lock:
     Optional argument. If lock is not added, will be unlocked. Locking means a
     dynamic windowrule cannot override this setting.
+
+flags:
+    See 'hyprctl --help')#";
+
+const std::string_view GETPROP_HELP = R"#(usage: hyprctl [flags] getprop <regex> <property>
+
+regex:
+    Regular expression by which a window will be searched
+
+property:
+    See https://wiki.hypr.land/Configuring/Using-hyprctl/#setprop for list
+    of properties
 
 flags:
     See 'hyprctl --help')#";

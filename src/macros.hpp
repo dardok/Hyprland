@@ -6,6 +6,7 @@
 #include <utility>
 
 #include "helpers/memory/Memory.hpp"
+#include "debug/Log.hpp"
 
 #ifndef NDEBUG
 #ifdef HYPRLAND_DEBUG
@@ -30,6 +31,9 @@
 
 #define MIN_WINDOW_SIZE 20.0
 
+// max value 32 because killed is a int uniform
+#define POINTER_PRESSED_HISTORY_LENGTH 32
+
 #define LISTENER(name)                                                                                                                                                             \
     void               listener_##name(wl_listener*, void*);                                                                                                                       \
     inline wl_listener listen_##name = {.notify = listener_##name}
@@ -37,7 +41,8 @@
 #define DYNLISTENER(name)      CHyprWLListener hyprListener_##name
 #define DYNMULTILISTENER(name) wl_listener listen_##name
 
-#define VECINRECT(vec, x1, y1, x2, y2) ((vec).x >= (x1) && (vec).x < (x2) && (vec).y >= (y1) && (vec).y < (y2))
+#define VECINRECT(vec, x1, y1, x2, y2)    ((vec).x >= (x1) && (vec).x < (x2) && (vec).y >= (y1) && (vec).y < (y2))
+#define VECNOTINRECT(vec, x1, y1, x2, y2) ((vec).x < (x1) || (vec).x >= (x2) || (vec).y < (y1) || (vec).y >= (y2))
 
 #define DELTALESSTHAN(a, b, delta) (abs((a) - (b)) < (delta))
 
@@ -87,10 +92,13 @@
     {                                                                                                                                                                              \
         Debug::log(CRIT, "\n\nMEMORY CORRUPTED: Unreachable failed! (Reached an unreachable position, memory corruption!!!)");                                                     \
         raise(SIGABRT);                                                                                                                                                            \
+        std::unreachable();                                                                                                                                                        \
     }
 #else
 #define UNREACHABLE() std::unreachable();
 #endif
+
+#if ISDEBUG
 
 #define GLCALL(__CALL__)                                                                                                                                                           \
     {                                                                                                                                                                              \
@@ -102,6 +110,13 @@
         }                                                                                                                                                                          \
     }
 
+#else
+
+#define GLCALL(__CALL__)                                                                                                                                                           \
+    { __CALL__; }
+
+#endif
+
 #define HYPRUTILS_FORWARD(ns, name)                                                                                                                                                \
     namespace Hyprutils {                                                                                                                                                          \
         namespace ns {                                                                                                                                                             \
@@ -109,7 +124,11 @@
         }                                                                                                                                                                          \
     }
 
+#define AQUAMARINE_VERSION_NUMBER (AQUAMARINE_VERSION_MAJOR * 10000 + AQUAMARINE_VERSION_MINOR * 100 + AQUAMARINE_VERSION_PATCH)
 #define AQUAMARINE_FORWARD(name)                                                                                                                                                   \
     namespace Aquamarine {                                                                                                                                                         \
         class name;                                                                                                                                                                \
     }
+
+#define UNLIKELY(expr) (expr) [[unlikely]]
+#define LIKELY(expr)   (expr) [[likely]]

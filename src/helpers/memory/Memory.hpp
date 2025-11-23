@@ -1,10 +1,15 @@
 #pragma once
 
 #include <hyprutils/memory/WeakPtr.hpp>
+#include <hyprutils/memory/Atomic.hpp>
 
-//NOLINTNEXTLINE
 using namespace Hyprutils::Memory;
 
-#define SP Hyprutils::Memory::CSharedPointer
-#define WP Hyprutils::Memory::CWeakPointer
-#define UP std::unique_ptr
+template <typename T>
+using SP = Hyprutils::Memory::CSharedPointer<T>;
+template <typename T>
+using WP = Hyprutils::Memory::CWeakPointer<T>;
+template <typename T>
+using UP = Hyprutils::Memory::CUniquePointer<T>;
+template <typename T>
+using ASP = Hyprutils::Memory::CAtomicSharedPointer<T>;

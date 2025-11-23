@@ -59,13 +59,13 @@ class CDecorationPositioner {
   public:
     CDecorationPositioner();
 
-    Vector2D getEdgeDefinedPoint(uint32_t edges, PHLWINDOW pWindow);
+    Vector2D getEdgeDefinedPoint(uint32_t edges, PHLWINDOWREF pWindow);
 
     // called on resize, or insert/removal of a new deco
     void        onWindowUpdate(PHLWINDOW pWindow);
     void        uncacheDecoration(IHyprWindowDecoration* deco);
-    SBoxExtents getWindowDecorationReserved(PHLWINDOW pWindow);
-    SBoxExtents getWindowDecorationExtents(PHLWINDOW pWindow, bool inputOnly = false);
+    SBoxExtents getWindowDecorationReserved(PHLWINDOWREF pWindow);
+    SBoxExtents getWindowDecorationExtents(PHLWINDOWREF pWindow, bool inputOnly = false);
     CBox        getBoxWithIncludedDecos(PHLWINDOW pWindow);
     void        repositionDeco(IHyprWindowDecoration* deco);
     CBox        getWindowDecorationBox(IHyprWindowDecoration* deco);
@@ -87,13 +87,13 @@ class CDecorationPositioner {
         bool        needsRecalc    = false;
     };
 
-    std::map<PHLWINDOWREF, SWindowData>                  m_mWindowDatas;
-    std::vector<std::unique_ptr<SWindowPositioningData>> m_vWindowPositioningDatas;
+    std::map<PHLWINDOWREF, SWindowData>     m_windowDatas;
+    std::vector<UP<SWindowPositioningData>> m_windowPositioningDatas;
 
-    SWindowPositioningData*                              getDataFor(IHyprWindowDecoration* pDecoration, PHLWINDOW pWindow);
-    void                                                 onWindowUnmap(PHLWINDOW pWindow);
-    void                                                 onWindowMap(PHLWINDOW pWindow);
-    void                                                 sanitizeDatas();
+    SWindowPositioningData*                 getDataFor(IHyprWindowDecoration* pDecoration, PHLWINDOW pWindow);
+    void                                    onWindowUnmap(PHLWINDOW pWindow);
+    void                                    onWindowMap(PHLWINDOW pWindow);
+    void                                    sanitizeDatas();
 };
 
-inline std::unique_ptr<CDecorationPositioner> g_pDecorationPositioner;
+inline UP<CDecorationPositioner> g_pDecorationPositioner;

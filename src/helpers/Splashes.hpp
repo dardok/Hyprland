@@ -49,7 +49,7 @@ namespace NSplashes {
         "By dt, do you mean damage tracking or distrotube?",
         "Made in Poland",
         "\"I use Arch, btw\" - John Cena",
-        "\"Hyper\".replace(\"e\", \"\")",
+        R"("Hyper".replace("e", ""))",
         "\"my win11 install runs hyprland that is true\" - raf",
         "\"stop playing league loser\" - hyprBot",
         "\"If it ain't broke, don't fix it\" - Lucascito_03",
@@ -58,7 +58,8 @@ namespace NSplashes {
         "Thanks ThatOneCalculator!",
         "The AUR packages always work, except for the times they don't.",
         "Funny animation compositor woo",
-        "2 years!",
+        "3 years!",
+        "Beauty will save the world", // 4th ricing comp winner - zacoons' choice
         // music reference / quote section
         "J'remue le ciel, le jour, la nuit.",
         "aezakmi, aezakmi, aezakmi, aezakmi, aezakmi, aezakmi, aezakmi!",

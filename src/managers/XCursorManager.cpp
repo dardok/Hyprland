@@ -1,3 +1,9 @@
+#define Time XTime__
+extern "C" {
+#include <X11/Xcursor/Xcursor.h>
+}
+#undef Time
+
 #include <algorithm>
 #include <cstring>
 #include <dirent.h>
@@ -9,6 +15,8 @@
 #include "../managers/CursorManager.hpp"
 #include "debug/Log.hpp"
 #include "XCursorManager.hpp"
+#include <memory>
+#include <variant>
 
 // clang-format off
 static std::vector<uint32_t> HYPR_XCURSOR_PIXELS = {
@@ -89,45 +97,45 @@ static std::vector<uint32_t> HYPR_XCURSOR_PIXELS = {
 // clang-format on
 
 CXCursorManager::CXCursorManager() {
-    hyprCursor = makeShared<SXCursors>();
+    m_hyprCursor = makeShared<SXCursors>();
     SXCursorImage image;
     image.size    = {32, 32};
     image.hotspot = {3, 2};
     image.pixels  = HYPR_XCURSOR_PIXELS;
     image.delay   = 0;
 
-    hyprCursor->images.push_back(image);
-    hyprCursor->shape = "left_ptr";
-    defaultCursor     = hyprCursor;
+    m_hyprCursor->images.push_back(image);
+    m_hyprCursor->shape = "left_ptr";
+    m_defaultCursor     = m_hyprCursor;
 }
 
 void CXCursorManager::loadTheme(std::string const& name, int size, float scale) {
-    if (lastLoadSize == (size * std::ceil(scale)) && themeName == name && lastLoadScale == scale)
+    if (m_lastLoadSize == (size * std::ceil(scale)) && m_themeName == name && m_lastLoadScale == scale)
         return;
 
-    lastLoadSize  = size * std::ceil(scale);
-    lastLoadScale = scale;
-    themeName     = name.empty() ? "default" : name;
-    defaultCursor.reset();
-    cursors.clear();
+    m_lastLoadSize  = size * std::ceil(scale);
+    m_lastLoadScale = scale;
+    m_themeName     = name.empty() ? "default" : name;
+    m_defaultCursor.reset();
+    m_cursors.clear();
 
-    auto paths = themePaths(themeName);
+    auto paths = themePaths(m_themeName);
     if (paths.empty()) {
         Debug::log(ERR, "XCursor librarypath is empty loading standard XCursors");
-        cursors = loadStandardCursors(themeName, lastLoadSize);
+        m_cursors = loadStandardCursors(m_themeName, m_lastLoadSize);
     } else {
         for (auto const& p : paths) {
             try {
-                auto dirCursors = loadAllFromDir(p, lastLoadSize);
-                std::copy_if(dirCursors.begin(), dirCursors.end(), std::back_inserter(cursors),
-                             [this](auto const& p) { return std::none_of(cursors.begin(), cursors.end(), [&p](auto const& dp) { return dp->shape == p->shape; }); });
+                auto dirCursors = loadAllFromDir(p, m_lastLoadSize);
+                std::ranges::copy_if(dirCursors, std::back_inserter(m_cursors),
+                                     [this](auto const& p) { return std::ranges::none_of(m_cursors, [&p](auto const& dp) { return dp->shape == p->shape; }); });
             } catch (std::exception& e) { Debug::log(ERR, "XCursor path {} can't be loaded: threw error {}", p, e.what()); }
         }
     }
 
-    if (cursors.empty()) {
-        Debug::log(ERR, "XCursor failed finding any shapes in theme \"{}\".", themeName);
-        defaultCursor = hyprCursor;
+    if (m_cursors.empty()) {
+        Debug::log(ERR, "XCursor failed finding any shapes in theme \"{}\".", m_themeName);
+        m_defaultCursor = m_hyprCursor;
         return;
     }
 
@@ -136,14 +144,14 @@ void CXCursorManager::loadTheme(std::string const& name, int size, float scale) 
         if (legacyName.empty())
             continue;
 
-        auto it = std::find_if(cursors.begin(), cursors.end(), [&legacyName](auto const& c) { return c->shape == legacyName; });
+        auto it = std::ranges::find_if(m_cursors, [&legacyName](auto const& c) { return c->shape == legacyName; });
 
-        if (it == cursors.end()) {
+        if (it == m_cursors.end()) {
             Debug::log(LOG, "XCursor failed to find a legacy shape with name {}, skipping", legacyName);
             continue;
         }
 
-        if (std::any_of(cursors.begin(), cursors.end(), [&shape](auto const& dp) { return dp->shape == shape; })) {
+        if (std::ranges::any_of(m_cursors, [&shape](auto const& dp) { return dp->shape == shape; })) {
             Debug::log(LOG, "XCursor already has a shape {} loaded, skipping", shape);
             continue;
         }
@@ -152,21 +160,19 @@ void CXCursorManager::loadTheme(std::string const& name, int size, float scale) 
         cursor->images = it->get()->images;
         cursor->shape  = shape;
 
-        cursors.emplace_back(cursor);
+        m_cursors.emplace_back(cursor);
     }
 
-    static auto SYNCGSETTINGS = CConfigValue<Hyprlang::INT>("cursor:sync_gsettings_theme");
-    if (*SYNCGSETTINGS)
-        syncGsettings();
+    syncGsettings();
 }
 
 SP<SXCursors> CXCursorManager::getShape(std::string const& shape, int size, float scale) {
     // monitor scaling changed etc, so reload theme with new size.
-    if ((size * std::ceil(scale)) != lastLoadSize || scale != lastLoadScale)
-        loadTheme(themeName, size, scale);
+    if ((size * std::ceil(scale)) != m_lastLoadSize || scale != m_lastLoadScale)
+        loadTheme(m_themeName, size, scale);
 
     // try to get an icon we know if we have one
-    for (auto const& c : cursors) {
+    for (auto const& c : m_cursors) {
         if (c->shape != shape)
             continue;
 
@@ -174,19 +180,20 @@ SP<SXCursors> CXCursorManager::getShape(std::string const& shape, int size, floa
     }
 
     Debug::log(WARN, "XCursor couldn't find shape {} , using default cursor instead", shape);
-    return defaultCursor;
+    return m_defaultCursor;
 }
 
-SP<SXCursors> CXCursorManager::createCursor(std::string const& shape, XcursorImages* xImages) {
-    auto xcursor = makeShared<SXCursors>();
+SP<SXCursors> CXCursorManager::createCursor(std::string const& shape, void* ximages) {
+    auto           xcursor = makeShared<SXCursors>();
+    XcursorImages* xImages = sc<XcursorImages*>(ximages);
 
     for (int i = 0; i < xImages->nimage; i++) {
         auto          xImage = xImages->images[i];
         SXCursorImage image;
-        image.size    = {(int)xImage->width, (int)xImage->height};
-        image.hotspot = {(int)xImage->xhot, (int)xImage->yhot};
-        image.pixels.resize((size_t)xImage->width * xImage->height);
-        std::memcpy(image.pixels.data(), xImage->pixels, (size_t)xImage->width * xImage->height * sizeof(uint32_t));
+        image.size    = {sc<int>(xImage->width), sc<int>(xImage->height)};
+        image.hotspot = {sc<int>(xImage->xhot), sc<int>(xImage->yhot)};
+        image.pixels.resize(sc<size_t>(xImage->width) * xImage->height);
+        std::memcpy(image.pixels.data(), xImage->pixels, sc<size_t>(xImage->width) * xImage->height * sizeof(uint32_t));
         image.delay = xImage->delay;
 
         xcursor->images.emplace_back(image);
@@ -481,7 +488,7 @@ std::vector<SP<SXCursors>> CXCursorManager::loadStandardCursors(std::string cons
 
     // load the default xcursor shapes that exist in the theme
     for (size_t i = 0; i < XCURSOR_STANDARD_NAMES.size(); ++i) {
-        std::string shape{XCURSOR_STANDARD_NAMES.at(i)};
+        std::string shape{XCURSOR_STANDARD_NAMES[i]};
         auto        xImages = XcursorShapeLoadImages(i << 1 /* wtf xcursor? */, name.c_str(), size);
 
         if (!xImages) {
@@ -497,15 +504,15 @@ std::vector<SP<SXCursors>> CXCursorManager::loadStandardCursors(std::string cons
         auto cursor = createCursor(shape, xImages);
         newCursors.emplace_back(cursor);
 
-        if (!defaultCursor && (shape == "left_ptr" || shape == "arrow"))
-            defaultCursor = cursor;
+        if (!m_defaultCursor && (shape == "left_ptr" || shape == "arrow"))
+            m_defaultCursor = cursor;
 
         XcursorImagesDestroy(xImages);
     }
 
     // broken theme.. just set it.
-    if (!newCursors.empty() && !defaultCursor)
-        defaultCursor = newCursors.front();
+    if (!newCursors.empty() && !m_defaultCursor)
+        m_defaultCursor = newCursors.front();
 
     return newCursors;
 }
@@ -523,7 +530,7 @@ std::vector<SP<SXCursors>> CXCursorManager::loadAllFromDir(std::string const& pa
 
             auto const& full = entry.path().string();
             using PcloseType = int (*)(FILE*);
-            const std::unique_ptr<FILE, PcloseType> f(fopen(full.c_str(), "r"), static_cast<PcloseType>(fclose));
+            const std::unique_ptr<FILE, PcloseType> f(fopen(full.c_str(), "r"), fclose);
 
             if (!f)
                 continue;
@@ -544,26 +551,30 @@ std::vector<SP<SXCursors>> CXCursorManager::loadAllFromDir(std::string const& pa
             auto        cursor = createCursor(shape, xImages);
             newCursors.emplace_back(cursor);
 
-            if (!defaultCursor && (shape == "left_ptr" || shape == "arrow"))
-                defaultCursor = cursor;
+            if (!m_defaultCursor && (shape == "left_ptr" || shape == "arrow"))
+                m_defaultCursor = cursor;
 
             XcursorImagesDestroy(xImages);
         }
     }
 
     // broken theme.. just set it.
-    if (!newCursors.empty() && !defaultCursor)
-        defaultCursor = newCursors.front();
+    if (!newCursors.empty() && !m_defaultCursor)
+        m_defaultCursor = newCursors.front();
 
     return newCursors;
 }
 
 void CXCursorManager::syncGsettings() {
+    static auto SYNCGSETTINGS = CConfigValue<Hyprlang::INT>("cursor:sync_gsettings_theme");
+    if (!*SYNCGSETTINGS)
+        return;
+
     auto checkParamExists = [](std::string const& paramName, std::string const& category) {
         auto* gSettingsSchemaSource = g_settings_schema_source_get_default();
 
         if (!gSettingsSchemaSource) {
-            Debug::log(WARN, "GSettings default schema source does not exist, cant sync GSettings");
+            Debug::log(WARN, "GSettings default schema source does not exist, can't sync GSettings");
             return false;
         }
 
@@ -581,7 +592,7 @@ void CXCursorManager::syncGsettings() {
     using SettingValue = std::variant<std::string, int>;
     auto setValue      = [&checkParamExists](std::string const& paramName, const SettingValue& paramValue, std::string const& category) {
         if (!checkParamExists(paramName, category)) {
-            Debug::log(WARN, "GSettings parameter doesnt exist {} in {}", paramName, category);
+            Debug::log(WARN, "GSettings parameter doesn't exist {} in {}", paramName, category);
             return;
         }
 
@@ -606,7 +617,7 @@ void CXCursorManager::syncGsettings() {
         g_object_unref(gsettings);
     };
 
-    int unscaledSize = lastLoadSize / std::ceil(lastLoadScale);
-    setValue("cursor-theme", themeName, "org.gnome.desktop.interface");
+    int unscaledSize = m_lastLoadSize / std::ceil(m_lastLoadScale);
+    setValue("cursor-theme", m_themeName, "org.gnome.desktop.interface");
     setValue("cursor-size", unscaledSize, "org.gnome.desktop.interface");
 }

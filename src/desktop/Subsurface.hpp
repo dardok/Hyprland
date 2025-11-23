@@ -10,54 +10,60 @@ class CWLSubsurfaceResource;
 class CSubsurface {
   public:
     // root dummy nodes
-    CSubsurface(PHLWINDOW pOwner);
-    CSubsurface(CPopup* pOwner);
+    static UP<CSubsurface> create(PHLWINDOW pOwner);
+    static UP<CSubsurface> create(WP<CPopup> pOwner);
 
     // real nodes
-    CSubsurface(SP<CWLSubsurfaceResource> pSubsurface, PHLWINDOW pOwner);
-    CSubsurface(SP<CWLSubsurfaceResource> pSubsurface, CPopup* pOwner);
+    static UP<CSubsurface> create(SP<CWLSubsurfaceResource> pSubsurface, PHLWINDOW pOwner);
+    static UP<CSubsurface> create(SP<CWLSubsurfaceResource> pSubsurface, WP<CPopup> pOwner);
 
-    ~CSubsurface();
+    ~CSubsurface() = default;
 
-    Vector2D coordsRelativeToParent();
-    Vector2D coordsGlobal();
+    Vector2D        coordsRelativeToParent();
+    Vector2D        coordsGlobal();
 
-    Vector2D size();
+    Vector2D        size();
 
-    void     onCommit();
-    void     onDestroy();
-    void     onNewSubsurface(SP<CWLSubsurfaceResource> pSubsurface);
-    void     onMap();
-    void     onUnmap();
+    void            onCommit();
+    void            onDestroy();
+    void            onNewSubsurface(SP<CWLSubsurfaceResource> pSubsurface);
+    void            onMap();
+    void            onUnmap();
 
-    bool     visible();
+    bool            visible();
 
-    void     recheckDamageForSubsurfaces();
+    void            recheckDamageForSubsurfaces();
+
+    WP<CSubsurface> m_self;
 
   private:
+    CSubsurface() = default;
+
     struct {
         CHyprSignalListener destroySubsurface;
         CHyprSignalListener commitSubsurface;
         CHyprSignalListener mapSubsurface;
         CHyprSignalListener unmapSubsurface;
         CHyprSignalListener newSubsurface;
-    } listeners;
+    } m_listeners;
 
-    WP<CWLSubsurfaceResource> m_pSubsurface;
-    SP<CWLSurface>            m_pWLSurface;
-    Vector2D                  m_vLastSize = {};
+    WP<CWLSubsurfaceResource> m_subsurface;
+    SP<CWLSurface>            m_wlSurface;
+    Vector2D                  m_lastSize     = {};
+    Vector2D                  m_lastPosition = {};
 
     // if nullptr, means it's a dummy node
-    CSubsurface*                              m_pParent = nullptr;
+    WP<CSubsurface>              m_parent;
 
-    PHLWINDOWREF                              m_pWindowParent;
-    CPopup*                                   m_pPopupParent = nullptr;
+    PHLWINDOWREF                 m_windowParent;
+    WP<CPopup>                   m_popupParent;
 
-    std::vector<std::unique_ptr<CSubsurface>> m_vChildren;
+    std::vector<UP<CSubsurface>> m_children;
 
-    bool                                      m_bInert = false;
+    bool                         m_inert = false;
 
-    void                                      initSignals();
-    void                                      initExistingSubsurfaces(SP<CWLSurfaceResource> pSurface);
-    void                                      checkSiblingDamage();
+    void                         initSignals();
+    void                         initExistingSubsurfaces(SP<CWLSurfaceResource> pSurface);
+    void                         checkSiblingDamage();
+    void                         damageLastArea();
 };

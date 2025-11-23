@@ -1,73 +1,131 @@
 #pragma once
 
 #include "../defines.hpp"
-#include <unordered_map>
+#include <array>
+#include <variant>
 
-class CShader {
-  public:
-    ~CShader();
+enum eShaderUniform : uint8_t {
+    SHADER_PROJ = 0,
+    SHADER_COLOR,
+    SHADER_ALPHA_MATTE,
+    SHADER_TEX_TYPE,
+    SHADER_SKIP_CM,
+    SHADER_SOURCE_TF,
+    SHADER_TARGET_TF,
+    SHADER_SRC_TF_RANGE,
+    SHADER_DST_TF_RANGE,
+    SHADER_TARGET_PRIMARIES,
+    SHADER_MAX_LUMINANCE,
+    SHADER_DST_MAX_LUMINANCE,
+    SHADER_DST_REF_LUMINANCE,
+    SHADER_SDR_SATURATION,
+    SHADER_SDR_BRIGHTNESS,
+    SHADER_CONVERT_MATRIX,
+    SHADER_TEX,
+    SHADER_ALPHA,
+    SHADER_POS_ATTRIB,
+    SHADER_TEX_ATTRIB,
+    SHADER_MATTE_TEX_ATTRIB,
+    SHADER_DISCARD_OPAQUE,
+    SHADER_DISCARD_ALPHA,
+    SHADER_DISCARD_ALPHA_VALUE,
+    SHADER_SHADER_VAO,
+    SHADER_SHADER_VBO_POS,
+    SHADER_SHADER_VBO_UV,
+    SHADER_TOP_LEFT,
+    SHADER_BOTTOM_RIGHT,
+    SHADER_FULL_SIZE,
+    SHADER_FULL_SIZE_UNTRANSFORMED,
+    SHADER_RADIUS,
+    SHADER_RADIUS_OUTER,
+    SHADER_ROUNDING_POWER,
+    SHADER_THICK,
+    SHADER_HALFPIXEL,
+    SHADER_RANGE,
+    SHADER_SHADOW_POWER,
+    SHADER_USE_ALPHA_MATTE,
+    SHADER_APPLY_TINT,
+    SHADER_TINT,
+    SHADER_GRADIENT,
+    SHADER_GRADIENT_LENGTH,
+    SHADER_ANGLE,
+    SHADER_GRADIENT2,
+    SHADER_GRADIENT2_LENGTH,
+    SHADER_ANGLE2,
+    SHADER_GRADIENT_LERP,
+    SHADER_TIME,
+    SHADER_DISTORT,
+    SHADER_WL_OUTPUT,
+    SHADER_CONTRAST,
+    SHADER_PASSES,
+    SHADER_VIBRANCY,
+    SHADER_VIBRANCY_DARKNESS,
+    SHADER_BRIGHTNESS,
+    SHADER_NOISE,
+    SHADER_POINTER,
+    SHADER_POINTER_SHAPE,
+    SHADER_POINTER_SWITCH_TIME,
+    SHADER_POINTER_SHAPE_PREVIOUS,
+    SHADER_POINTER_PRESSED_POSITIONS,
+    SHADER_POINTER_HIDDEN,
+    SHADER_POINTER_KILLING,
+    SHADER_POINTER_PRESSED_TIMES,
+    SHADER_POINTER_PRESSED_KILLED,
+    SHADER_POINTER_PRESSED_TOUCHED,
+    SHADER_POINTER_INACTIVE_TIMEOUT,
+    SHADER_POINTER_LAST_ACTIVE,
+    SHADER_POINTER_SIZE,
 
-    GLuint  program           = 0;
-    GLint   proj              = -1;
-    GLint   color             = -1;
-    GLint   alphaMatte        = -1;
-    GLint   tex               = -1;
-    GLint   alpha             = -1;
-    GLint   posAttrib         = -1;
-    GLint   texAttrib         = -1;
-    GLint   matteTexAttrib    = -1;
-    GLint   discardOpaque     = -1;
-    GLint   discardAlpha      = -1;
-    GLfloat discardAlphaValue = -1;
+    SHADER_LAST,
+};
 
-    GLint   topLeft               = -1;
-    GLint   bottomRight           = -1;
-    GLint   fullSize              = -1;
-    GLint   fullSizeUntransformed = -1;
-    GLint   radius                = -1;
-    GLint   radiusOuter           = -1;
-    GLfloat roundingPower         = -1;
+struct SShader {
+    SShader();
+    ~SShader();
 
-    GLint   thick = -1;
+    GLuint                         program = 0;
 
-    GLint   halfpixel = -1;
+    std::array<GLint, SHADER_LAST> uniformLocations;
 
-    GLint   range         = -1;
-    GLint   shadowPower   = -1;
-    GLint   useAlphaMatte = -1; // always inverted
+    float                          initialTime = 0;
 
-    GLint   applyTint = -1;
-    GLint   tint      = -1;
+    struct SUniformMatrix3Data {
+        GLsizei                count     = 0;
+        GLboolean              transpose = false;
+        std::array<GLfloat, 9> value     = {};
+    };
 
-    GLint   gradient        = -1;
-    GLint   gradientLength  = -1;
-    GLint   angle           = -1;
-    GLint   gradient2       = -1;
-    GLint   gradient2Length = -1;
-    GLint   angle2          = -1;
-    GLint   gradientLerp    = -1;
+    struct SUniformMatrix4Data {
+        GLsizei                count     = 0;
+        GLboolean              transpose = false;
+        std::array<GLfloat, 8> value     = {};
+    };
 
-    float   initialTime = 0;
-    GLint   time        = -1;
-    GLint   distort     = -1;
-    GLint   wl_output   = -1;
+    struct SUniformVData {
+        GLsizei            count = 0;
+        std::vector<float> value;
+    };
 
-    // Blur prepare
-    GLint contrast = -1;
+    //
+    std::array<std::variant<std::monostate, GLint, GLfloat, std::array<GLfloat, 2>, std::array<GLfloat, 3>, std::array<GLfloat, 4>, SUniformMatrix3Data, SUniformMatrix4Data,
+                            SUniformVData>,
+               SHADER_LAST>
+        uniformStatus;
+    //
 
-    // Blur
-    GLint passes            = -1; // Used by `vibrancy`
-    GLint vibrancy          = -1;
-    GLint vibrancy_darkness = -1;
-
-    // Blur finish
-    GLint brightness = -1;
-    GLint noise      = -1;
-
-    GLint getUniformLocation(const std::string&);
-
-    void  destroy();
+    void createVao();
+    void setUniformInt(eShaderUniform location, GLint v0);
+    void setUniformFloat(eShaderUniform location, GLfloat v0);
+    void setUniformFloat2(eShaderUniform location, GLfloat v0, GLfloat v1);
+    void setUniformFloat3(eShaderUniform location, GLfloat v0, GLfloat v1, GLfloat v2);
+    void setUniformFloat4(eShaderUniform location, GLfloat v0, GLfloat v1, GLfloat v2, GLfloat v3);
+    void setUniformMatrix3fv(eShaderUniform location, GLsizei count, GLboolean transpose, std::array<GLfloat, 9> value);
+    void setUniformMatrix4x2fv(eShaderUniform location, GLsizei count, GLboolean transpose, std::array<GLfloat, 8> value);
+    void setUniform1fv(eShaderUniform location, GLsizei count, const std::vector<float>& value);
+    void setUniform2fv(eShaderUniform location, GLsizei count, const std::vector<float>& value);
+    void setUniform4fv(eShaderUniform location, GLsizei count, const std::vector<float>& value);
+    void destroy();
 
   private:
-    std::unordered_map<std::string, GLint> m_muUniforms;
+    void setUniformfv(eShaderUniform location, GLsizei count, const std::vector<float>& value, GLsizei vec_size);
 };

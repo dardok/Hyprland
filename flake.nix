@@ -35,11 +35,15 @@
       inputs.systems.follows = "systems";
     };
 
-    hyprland-qtutils = {
-      url = "github:hyprwm/hyprland-qtutils";
+    hyprland-guiutils = {
+      url = "github:hyprwm/hyprland-guiutils";
       inputs.nixpkgs.follows = "nixpkgs";
       inputs.systems.follows = "systems";
+      inputs.aquamarine.follows = "aquamarine";
+      inputs.hyprgraphics.follows = "hyprgraphics";
       inputs.hyprutils.follows = "hyprutils";
+      inputs.hyprlang.follows = "hyprlang";
+      inputs.hyprwayland-scanner.follows = "hyprwayland-scanner";
     };
 
     hyprlang = {
@@ -102,6 +106,21 @@
           hyprland-extras
         ];
       });
+    pkgsDebugFor = eachSystem (system:
+      import nixpkgs {
+        localSystem = system;
+        overlays = with self.overlays; [
+          hyprland-debug
+        ];
+      });
+    pkgsDebugCrossFor = eachSystem (system: crossSystem:
+      import nixpkgs {
+        localSystem = system;
+        inherit crossSystem;
+        overlays = with self.overlays; [
+          hyprland-debug
+        ];
+      });
   in {
     overlays = import ./nix/overlays.nix {inherit self lib inputs;};
 
@@ -123,7 +142,8 @@
             };
           };
         };
-      });
+      }
+      // (import ./nix/tests inputs pkgsFor.${system}));
 
     packages = eachSystem (system: {
       default = self.packages.${system}.hyprland;
@@ -131,13 +151,13 @@
         (pkgsFor.${system})
         # hyprland-packages
         hyprland
-        hyprland-debug
-        hyprland-legacy-renderer
         hyprland-unwrapped
         # hyprland-extras
         xdg-desktop-portal-hyprland
         ;
+      inherit (pkgsDebugFor.${system}) hyprland-debug;
       hyprland-cross = (pkgsCrossFor.${system} "aarch64-linux").hyprland;
+      hyprland-debug-cross = (pkgsDebugCrossFor.${system} "aarch64-linux").hyprland-debug;
     });
 
     devShells = eachSystem (system: {
@@ -157,5 +177,11 @@
 
     nixosModules.default = import ./nix/module.nix inputs;
     homeManagerModules.default = import ./nix/hm-module.nix self;
+
+    # Hydra build jobs
+    # Recent versions of Hydra can aggregate jobsets from 'hydraJobs' instead of a release.nix
+    # or similar. Remember to filter large or incompatible attributes here. More eval jobs can
+    # be added by merging, e.g., self.packages // self.devShells.
+    hydraJobs = self.packages;
   };
 }

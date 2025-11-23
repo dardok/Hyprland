@@ -1,7 +1,7 @@
 #include "SdDaemon.hpp"
+#include "memory/Memory.hpp"
 
 #include <memory>
-
 #include <fcntl.h>
 #include <unistd.h>
 #include <cerrno>
@@ -47,7 +47,7 @@ int NSystemd::sdNotify(int unsetEnvironment, const char* state) {
     if (unixAddr.sun_path[0] == '@')
         unixAddr.sun_path[0] = '\0';
 
-    if (connect(fd, (const sockaddr*)&unixAddr, sizeof(struct sockaddr_un)) < 0)
+    if (connect(fd, rc<const sockaddr*>(&unixAddr), sizeof(struct sockaddr_un)) < 0)
         return -errno;
 
     // arbitrary value which seems to be enough for s-d messages

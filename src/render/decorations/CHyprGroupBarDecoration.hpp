@@ -5,18 +5,20 @@
 #include <vector>
 #include "../Texture.hpp"
 #include <string>
-#include <memory>
+#include "../../helpers/memory/Memory.hpp"
 
 class CTitleTex {
   public:
     CTitleTex(PHLWINDOW pWindow, const Vector2D& bufferSize, const float monitorScale);
-    ~CTitleTex();
+    ~CTitleTex() = default;
 
-    SP<CTexture> tex;
-    std::string  szContent;
-    Vector2D     texSize;
+    SP<CTexture> m_texActive;
+    SP<CTexture> m_texInactive;
+    SP<CTexture> m_texLockedActive;
+    SP<CTexture> m_texLockedInactive;
+    std::string  m_content;
 
-    PHLWINDOWREF pWindowOwner;
+    PHLWINDOWREF m_windowOwner;
 };
 
 void refreshGroupBarGradients();
@@ -24,7 +26,7 @@ void refreshGroupBarGradients();
 class CHyprGroupBarDecoration : public IHyprWindowDecoration {
   public:
     CHyprGroupBarDecoration(PHLWINDOW);
-    virtual ~CHyprGroupBarDecoration();
+    virtual ~CHyprGroupBarDecoration() = default;
 
     virtual SDecorationPositioningInfo getPositioningInfo();
 
@@ -47,21 +49,22 @@ class CHyprGroupBarDecoration : public IHyprWindowDecoration {
     virtual std::string                getDisplayName();
 
   private:
-    SBoxExtents               m_seExtents;
+    CBox                      m_assignedBox = {0};
 
-    CBox                      m_bAssignedBox = {0};
-
-    PHLWINDOWREF              m_pWindow;
+    PHLWINDOWREF              m_window;
 
     std::vector<PHLWINDOWREF> m_dwGroupMembers;
 
-    float                     m_fBarWidth;
-    float                     m_fBarHeight;
+    float                     m_barWidth;
+    float                     m_barHeight;
+
+    bool                      m_bLastVisibilityStatus = true;
 
     CTitleTex*                textureFromTitle(const std::string&);
     void                      invalidateTextures();
 
     CBox                      assignedBoxGlobal();
+    bool                      visible();
 
     bool                      onBeginWindowDragOnDeco(const Vector2D&);
     bool                      onEndWindowDragOnDeco(const Vector2D&, PHLWINDOW);
@@ -70,6 +73,6 @@ class CHyprGroupBarDecoration : public IHyprWindowDecoration {
 
     struct STitleTexs {
         // STitleTexs*                            overriden = nullptr; // TODO: make shit shared in-group to decrease VRAM usage.
-        std::vector<std::unique_ptr<CTitleTex>> titleTexs;
-    } m_sTitleTexs;
+        std::vector<UP<CTitleTex>> titleTexs;
+    } m_titleTexs;
 };

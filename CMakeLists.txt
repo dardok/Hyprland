@@ -9,6 +9,7 @@ project(
   DESCRIPTION "A Modern C++ Wayland Compositor"
   VERSION ${VER})
 
+include(CTest)
 include(CheckIncludeFile)
 include(GNUInstallDirs)
 
@@ -22,8 +23,8 @@ set(CMAKE_MESSAGE_LOG_LEVEL "STATUS")
 
 message(STATUS "Gathering git info")
 
-# Get git info hash and branch
-execute_process(COMMAND ./scripts/generateVersion.sh
+# Make shader files includable
+execute_process(COMMAND ./scripts/generateShaderIncludes.sh
                 WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 
 find_package(PkgConfig REQUIRED)
@@ -77,15 +78,22 @@ add_compile_definitions(HYPRLAND_VERSION="${HYPRLAND_VERSION}")
 include_directories(. "src/" "protocols/")
 
 set(CMAKE_CXX_STANDARD 26)
+set(CXX_STANDARD_REQUIRED ON)
 add_compile_options(
   -Wall
   -Wextra
+  -Wpedantic
   -Wno-unused-parameter
   -Wno-unused-value
   -Wno-missing-field-initializers
+  -Wno-gnu-zero-variadic-macro-arguments
   -Wno-narrowing
   -Wno-pointer-arith
+  -Wno-clobbered
   -fmacro-prefix-map=${CMAKE_SOURCE_DIR}/=)
+
+# disable lto as it may break plugins
+add_compile_options(-fno-lto)
 
 set(CMAKE_EXECUTABLE_ENABLE_EXPORTS TRUE)
 set(CMAKE_EXPORT_COMPILE_COMMANDS TRUE)
@@ -94,43 +102,139 @@ message(STATUS "Checking deps...")
 
 find_package(Threads REQUIRED)
 
-if(LEGACY_RENDERER)
-  set(GLES_VERSION "GLES2")
-else()
-  set(GLES_VERSION "GLES3")
-endif()
+set(GLES_VERSION "GLES3")
 find_package(OpenGL REQUIRED COMPONENTS ${GLES_VERSION})
 
-pkg_check_modules(aquamarine_dep REQUIRED IMPORTED_TARGET aquamarine>=0.4.5)
+pkg_check_modules(aquamarine_dep REQUIRED IMPORTED_TARGET aquamarine>=0.9.3)
 pkg_check_modules(hyprlang_dep REQUIRED IMPORTED_TARGET hyprlang>=0.3.2)
 pkg_check_modules(hyprcursor_dep REQUIRED IMPORTED_TARGET hyprcursor>=0.1.7)
-pkg_check_modules(hyprutils_dep REQUIRED IMPORTED_TARGET hyprutils>=0.3.3)
-pkg_check_modules(hyprgraphics_dep REQUIRED IMPORTED_TARGET hyprgraphics>=0.1.1)
+pkg_check_modules(hyprutils_dep REQUIRED IMPORTED_TARGET hyprutils>=0.10.2)
+pkg_check_modules(hyprgraphics_dep REQUIRED IMPORTED_TARGET hyprgraphics>=0.1.6)
 
-add_compile_definitions(AQUAMARINE_VERSION="${aquamarine_dep_VERSION}")
-add_compile_definitions(HYPRLANG_VERSION="${hyprlang_dep_VERSION}")
-add_compile_definitions(HYPRUTILS_VERSION="${hyprutils_dep_VERSION}")
-add_compile_definitions(HYPRCURSOR_VERSION="${hyprcursor_dep_VERSION}")
-add_compile_definitions(HYPRGRAPHICS_VERSION="${hyprgraphics_dep_VERSION}")
+string(REPLACE "." ";" AQ_VERSION_LIST ${aquamarine_dep_VERSION})
+list(GET AQ_VERSION_LIST 0 AQ_VERSION_MAJOR)
+list(GET AQ_VERSION_LIST 1 AQ_VERSION_MINOR)
+list(GET AQ_VERSION_LIST 2 AQ_VERSION_PATCH)
+
+set(AQUAMARINE_VERSION "${aquamarine_dep_VERSION}")
+set(AQUAMARINE_VERSION_MAJOR "${AQ_VERSION_MAJOR}")
+set(AQUAMARINE_VERSION_MINOR "${AQ_VERSION_MINOR}")
+set(AQUAMARINE_VERSION_PATCH "${AQ_VERSION_PATCH}")
+set(HYPRLANG_VERSION "${hyprlang_dep_VERSION}")
+set(HYPRUTILS_VERSION "${hyprutils_dep_VERSION}")
+set(HYPRCURSOR_VERSION "${hyprcursor_dep_VERSION}")
+set(HYPRGRAPHICS_VERSION "${hyprgraphics_dep_VERSION}")
+
+
+find_package(Git QUIET)
+
+# Populate variables with env vars if present
+set(GIT_COMMIT_HASH "$ENV{GIT_COMMIT_HASH}")
+if(NOT GIT_COMMIT_HASH)
+  set(GIT_COMMIT_HASH "unknown")
+endif()
+
+set(GIT_BRANCH "$ENV{GIT_BRANCH}")
+if(NOT GIT_BRANCH)
+  set(GIT_BRANCH "unknown")
+endif()
+
+set(GIT_COMMIT_MESSAGE "$ENV{GIT_COMMIT_MESSAGE}")
+if(NOT GIT_COMMIT_MESSAGE)
+  set(GIT_COMMIT_MESSAGE "unknown")
+endif()
+
+set(GIT_COMMIT_DATE "$ENV{GIT_COMMIT_DATE}")
+if(NOT GIT_COMMIT_DATE)
+  set(GIT_COMMIT_DATE "unknown")
+endif()
+
+set(GIT_DIRTY "$ENV{GIT_DIRTY}")
+if(NOT GIT_DIRTY)
+  set(GIT_DIRTY "unknown")
+endif()
+
+set(GIT_TAG "$ENV{GIT_TAG}")
+if(NOT GIT_TAG)
+  set(GIT_TAG "unknown")
+endif()
+
+set(GIT_COMMITS "$ENV{GIT_COMMITS}")
+if(NOT GIT_COMMITS)
+  set(GIT_COMMITS "0")
+endif()
+
+if(Git_FOUND)
+  execute_process(
+    COMMAND ${GIT_EXECUTABLE} rev-parse --show-toplevel
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+    OUTPUT_VARIABLE GIT_TOPLEVEL
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+    ERROR_QUIET
+    RESULT_VARIABLE GIT_TOPLEVEL_RESULT
+  )
+
+  if(GIT_TOPLEVEL_RESULT EQUAL 0)
+    message(STATUS "Detected git repository root: ${GIT_TOPLEVEL}")
+
+    execute_process(COMMAND ${GIT_EXECUTABLE} rev-parse HEAD
+      WORKING_DIRECTORY ${GIT_TOPLEVEL}
+      OUTPUT_VARIABLE GIT_COMMIT_HASH OUTPUT_STRIP_TRAILING_WHITESPACE)
+    execute_process(COMMAND ${GIT_EXECUTABLE} branch --show-current
+      WORKING_DIRECTORY ${GIT_TOPLEVEL}
+      OUTPUT_VARIABLE GIT_BRANCH OUTPUT_STRIP_TRAILING_WHITESPACE)
+    execute_process(COMMAND sh "-c" "${GIT_EXECUTABLE} show -s --format=%s --no-show-signature | sed \"s/\\\"/\'/g\""
+      WORKING_DIRECTORY ${GIT_TOPLEVEL}
+      OUTPUT_VARIABLE GIT_COMMIT_MESSAGE OUTPUT_STRIP_TRAILING_WHITESPACE)
+    execute_process(COMMAND ${GIT_EXECUTABLE} show -s --format=%cd --date=local --no-show-signature
+      WORKING_DIRECTORY ${GIT_TOPLEVEL}
+      OUTPUT_VARIABLE GIT_COMMIT_DATE OUTPUT_STRIP_TRAILING_WHITESPACE)
+    execute_process(COMMAND ${GIT_EXECUTABLE} diff-index --quiet HEAD --
+      WORKING_DIRECTORY ${GIT_TOPLEVEL}
+      RESULT_VARIABLE GIT_DIRTY_RESULT)
+    if(NOT GIT_DIRTY_RESULT EQUAL 0)
+      set(GIT_DIRTY "dirty")
+    else()
+      set(GIT_DIRTY "clean")
+    endif()
+    execute_process(COMMAND ${GIT_EXECUTABLE} describe --tags
+      WORKING_DIRECTORY ${GIT_TOPLEVEL}
+      OUTPUT_VARIABLE GIT_TAG OUTPUT_STRIP_TRAILING_WHITESPACE)
+    execute_process(COMMAND ${GIT_EXECUTABLE} rev-list --count HEAD
+      WORKING_DIRECTORY ${GIT_TOPLEVEL}
+      OUTPUT_VARIABLE GIT_COMMITS OUTPUT_STRIP_TRAILING_WHITESPACE)
+  else()
+    message(WARNING "No Git repository detected in ${CMAKE_SOURCE_DIR}")
+  endif()
+endif()
+
+configure_file(
+    ${CMAKE_SOURCE_DIR}/src/version.h.in
+    ${CMAKE_SOURCE_DIR}/src/version.h
+    @ONLY
+)
+
+set_source_files_properties(${CMAKE_SOURCE_DIR}/src/version.h PROPERTIES GENERATED TRUE)
 
 pkg_check_modules(
   deps
   REQUIRED
   IMPORTED_TARGET
-  xkbcommon
+  xkbcommon>=1.11.0
   uuid
   wayland-server>=1.22.90
-  wayland-protocols
+  wayland-protocols>=1.45
   cairo
   pango
   pangocairo
   pixman-1
   xcursor
   libdrm
-  libinput
+  libinput>=1.28
   gbm
   gio-2.0
-  re2)
+  re2
+  muparser)
 
 find_package(hyprwayland-scanner 0.3.10 REQUIRED)
 
@@ -144,7 +248,7 @@ endif()
 
 add_executable(Hyprland ${SRCFILES} ${TRACY_CPP_FILES})
 
-set(USE_GPROF ON)
+set(USE_GPROF OFF)
 
 if(CMAKE_BUILD_TYPE MATCHES Debug OR CMAKE_BUILD_TYPE MATCHES DEBUG)
   message(STATUS "Setting debug flags")
@@ -197,9 +301,10 @@ if(NOT HAS_TIMERFD AND epoll_FOUND)
   target_link_libraries(Hyprland PkgConfig::epoll)
 endif()
 
-if(LEGACY_RENDERER)
-  message(STATUS "Using the legacy GLES2 renderer!")
-  add_compile_definitions(LEGACY_RENDERER)
+check_include_file("sys/inotify.h" HAS_INOTIFY)
+pkg_check_modules(inotify IMPORTED_TARGET libinotify)
+if(NOT HAS_INOTIFY AND inotify_FOUND)
+  target_link_libraries(Hyprland PkgConfig::inotify)
 endif()
 
 if(NO_XWAYLAND)
@@ -241,14 +346,25 @@ set(CPACK_PROJECT_NAME ${PROJECT_NAME})
 set(CPACK_PROJECT_VERSION ${PROJECT_VERSION})
 include(CPack)
 
-message(STATUS "Setting precompiled headers")
-
-target_precompile_headers(Hyprland PRIVATE
-                          $<$<COMPILE_LANGUAGE:CXX>:src/pch/pch.hpp>)
+if(CMAKE_DISABLE_PRECOMPILE_HEADERS)
+  message(STATUS "Not using precompiled headers")
+else()
+  message(STATUS "Setting precompiled headers")
+  target_precompile_headers(Hyprland PRIVATE
+                            $<$<COMPILE_LANGUAGE:CXX>:src/pch/pch.hpp>)
+endif()
 
 message(STATUS "Setting link libraries")
 
-target_link_libraries(Hyprland rt PkgConfig::aquamarine_dep PkgConfig::hyprlang_dep PkgConfig::hyprutils_dep PkgConfig::hyprcursor_dep PkgConfig::hyprgraphics_dep PkgConfig::deps)
+target_link_libraries(
+  Hyprland
+  rt
+  PkgConfig::aquamarine_dep
+  PkgConfig::hyprlang_dep
+  PkgConfig::hyprutils_dep
+  PkgConfig::hyprcursor_dep
+  PkgConfig::hyprgraphics_dep
+  PkgConfig::deps)
 if(udis_dep_FOUND)
   target_link_libraries(Hyprland PkgConfig::udis_dep)
 else()
@@ -290,7 +406,7 @@ endfunction()
 
 target_link_libraries(Hyprland OpenGL::EGL OpenGL::GL Threads::Threads)
 
-pkg_check_modules(hyprland_protocols_dep hyprland-protocols>=0.4.0)
+pkg_check_modules(hyprland_protocols_dep hyprland-protocols>=0.6.4)
 if(hyprland_protocols_dep_FOUND)
   pkg_get_variable(HYPRLAND_PROTOCOLS hyprland-protocols pkgdatadir)
   message(STATUS "hyprland-protocols dependency set to ${HYPRLAND_PROTOCOLS}")
@@ -321,6 +437,9 @@ protocolnew("protocols" "frog-color-management-v1" true)
 protocolnew("protocols" "wayland-drm" true)
 protocolnew("${HYPRLAND_PROTOCOLS}/protocols" "hyprland-ctm-control-v1" true)
 protocolnew("${HYPRLAND_PROTOCOLS}/protocols" "hyprland-surface-v1" true)
+protocolnew("${HYPRLAND_PROTOCOLS}/protocols" "hyprland-lock-notify-v1" true)
+protocolnew("${HYPRLAND_PROTOCOLS}/protocols" "hyprland-toplevel-mapping-v1"
+            true)
 
 protocolnew("staging/tearing-control" "tearing-control-v1" false)
 protocolnew("staging/fractional-scale" "fractional-scale-v1" false)
@@ -353,12 +472,27 @@ protocolnew("staging/linux-drm-syncobj" "linux-drm-syncobj-v1" false)
 protocolnew("staging/xdg-dialog" "xdg-dialog-v1" false)
 protocolnew("staging/single-pixel-buffer" "single-pixel-buffer-v1" false)
 protocolnew("staging/security-context" "security-context-v1" false)
+protocolnew("staging/content-type" "content-type-v1" false)
+protocolnew("staging/color-management" "color-management-v1" false)
+protocolnew("staging/xdg-toplevel-tag" "xdg-toplevel-tag-v1" false)
+protocolnew("staging/xdg-system-bell" "xdg-system-bell-v1" false)
+protocolnew("staging/ext-workspace" "ext-workspace-v1" false)
+protocolnew("staging/ext-data-control" "ext-data-control-v1" false)
+protocolnew("staging/pointer-warp" "pointer-warp-v1" false)
+protocolnew("staging/fifo" "fifo-v1" false)
+protocolnew("staging/commit-timing" "commit-timing-v1" false)
 
 protocolwayland()
 
 # tools
 add_subdirectory(hyprctl)
-add_subdirectory(hyprpm)
+
+if(NO_HYPRPM)
+  message(STATUS "hyprpm is disabled")
+else()
+  add_subdirectory(hyprpm)
+  message(STATUS "hyprpm is enabled (NO_HYPRPM not defined)")
+endif()
 
 # binary and symlink
 install(TARGETS Hyprland)
@@ -369,7 +503,6 @@ install(
         ${CMAKE_INSTALL_FULL_BINDIR}/Hyprland \
         \"\$ENV{DESTDIR}${CMAKE_INSTALL_FULL_BINDIR}/hyprland\" \
         )")
-
 # session file
 install(FILES ${CMAKE_SOURCE_DIR}/example/hyprland.desktop
         DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/wayland-sessions)
@@ -379,7 +512,6 @@ add_compile_definitions(DATAROOTDIR="${CMAKE_INSTALL_FULL_DATAROOTDIR}")
 
 # installable assets
 file(GLOB_RECURSE INSTALLABLE_ASSETS "assets/install/*")
-list(FILTER INSTALLABLE_ASSETS EXCLUDE REGEX "meson.build")
 install(FILES ${INSTALLABLE_ASSETS}
         DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/hypr)
 
@@ -413,4 +545,28 @@ install(
   DIRECTORY ${HEADERS_SRC}
   DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/hyprland
   FILES_MATCHING
-  PATTERN "*.h*")
+  PATTERN "*.h"
+  PATTERN "*.hpp"
+  PATTERN "*.inc")
+
+if(BUILD_TESTING OR BUILD_HYPRTESTER)
+  message(STATUS "Building hyprtester")
+
+  add_subdirectory(hyprtester)
+endif()
+
+if(BUILD_TESTING)
+  message(STATUS "Testing is enabled")
+
+  enable_testing()
+  add_custom_target(tests)
+
+  add_test(
+    NAME "Main Test"
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}/hyprtester
+    COMMAND hyprtester)
+
+  add_dependencies(tests hyprtester)
+else()
+  message(STATUS "Testing is disabled")
+endif()

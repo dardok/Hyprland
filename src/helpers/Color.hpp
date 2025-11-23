@@ -2,7 +2,6 @@
 
 #include <cstdint>
 #include <hyprgraphics/color/Color.hpp>
-#include "../debug/Log.hpp"
 #include "../macros.hpp"
 
 class CHyprColor {
@@ -44,7 +43,7 @@ class CHyprColor {
     double r = 0, g = 0, b = 0, a = 0;
 
   private:
-    Hyprgraphics::CColor::SOkLab okLab; // cache for the OkLab representation
+    Hyprgraphics::CColor::SOkLab m_okLab; // cache for the OkLab representation
 };
 
 //NOLINTNEXTLINE

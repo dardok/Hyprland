@@ -1,6 +1,5 @@
 #pragma once
 
-#include <memory>
 #include <vector>
 #include <cstdint>
 #include "WaylandProtocol.hpp"
@@ -13,15 +12,17 @@ class CMonitor;
 
 class CHyprlandCTMControlResource {
   public:
-    CHyprlandCTMControlResource(SP<CHyprlandCtmControlManagerV1> resource_);
+    CHyprlandCTMControlResource(UP<CHyprlandCtmControlManagerV1>&& resource_);
     ~CHyprlandCTMControlResource();
 
     bool good();
+    void block();
 
   private:
-    SP<CHyprlandCtmControlManagerV1>        resource;
+    UP<CHyprlandCtmControlManagerV1>        m_resource;
 
-    std::unordered_map<std::string, Mat3x3> ctms;
+    std::unordered_map<std::string, Mat3x3> m_ctms;
+    bool                                    m_blocked = false;
 };
 
 class CHyprlandCTMControlProtocol : public IWaylandProtocol {
@@ -37,7 +38,8 @@ class CHyprlandCTMControlProtocol : public IWaylandProtocol {
     bool isCTMAnimationEnabled();
 
     //
-    std::vector<SP<CHyprlandCTMControlResource>> m_vManagers;
+    std::vector<UP<CHyprlandCTMControlResource>> m_managers;
+    WP<CHyprlandCTMControlResource>              m_manager;
 
     //
     struct SCTMData {
@@ -45,7 +47,7 @@ class CHyprlandCTMControlProtocol : public IWaylandProtocol {
         Mat3x3            ctmFrom = Mat3x3::identity(), ctmTo = Mat3x3::identity();
         PHLANIMVAR<float> progress;
     };
-    std::map<PHLMONITORREF, std::unique_ptr<SCTMData>> m_mCTMDatas;
+    std::map<PHLMONITORREF, UP<SCTMData>> m_ctmDatas;
 
     friend class CHyprlandCTMControlResource;
 };

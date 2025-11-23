@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../defines.hpp"
+#include "../helpers/memory/Memory.hpp"
 
 #include <functional>
 
@@ -60,6 +61,6 @@ class IWaylandProtocol {
     SIWaylandProtocolDestroyWrapper m_liDisplayDestroy;
 
   private:
-    std::string m_szName;
-    wl_global*  m_pGlobal = nullptr;
+    std::string m_name;
+    wl_global*  m_global = nullptr;
 };

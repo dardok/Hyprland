@@ -6,17 +6,16 @@
   pkgconf,
   makeWrapper,
   cmake,
-  meson,
-  ninja,
   aquamarine,
   binutils,
   cairo,
+  epoll-shim,
   git,
   glaze,
   hyprcursor,
   hyprgraphics,
   hyprland-protocols,
-  hyprland-qtutils,
+  hyprland-guiutils,
   hyprlang,
   hyprutils,
   hyprwayland-scanner,
@@ -26,7 +25,8 @@
   libinput,
   libxkbcommon,
   libuuid,
-  mesa,
+  libgbm,
+  muparser,
   pango,
   pciutils,
   re2,
@@ -40,7 +40,6 @@
   xwayland,
   debug ? false,
   enableXWayland ? true,
-  legacyRenderer ? false,
   withSystemd ? lib.meta.availableOn stdenv.hostPlatform systemd,
   wrapRuntimeDeps ? true,
   version ? "git",
@@ -51,13 +50,15 @@
   enableNvidiaPatches ? false,
   nvidiaPatches ? false,
   hidpiXWayland ? false,
+  legacyRenderer ? false,
+  withHyprtester ? false,
 }: let
-  inherit (builtins) baseNameOf foldl' readFile;
+  inherit (builtins) foldl' readFile;
   inherit (lib.asserts) assertMsg;
   inherit (lib.attrsets) mapAttrsToList;
   inherit (lib.lists) flatten concatLists optional optionals;
-  inherit (lib.sources) cleanSourceWith cleanSource;
-  inherit (lib.strings) hasSuffix makeBinPath optionalString mesonBool mesonEnable trim;
+  inherit (lib.strings) makeBinPath optionalString cmakeBool trim;
+  fs = lib.fileset;
 
   adapters = flatten [
     stdenvAdapters.useMoldLinker
@@ -68,17 +69,35 @@
 in
   assert assertMsg (!nvidiaPatches) "The option `nvidiaPatches` has been removed.";
   assert assertMsg (!enableNvidiaPatches) "The option `enableNvidiaPatches` has been removed.";
-  assert assertMsg (!hidpiXWayland) "The option `hidpiXWayland` has been removed. Please refer https://wiki.hyprland.org/Configuring/XWayland";
+  assert assertMsg (!hidpiXWayland) "The option `hidpiXWayland` has been removed. Please refer https://wiki.hypr.land/Configuring/XWayland";
+  assert assertMsg (!legacyRenderer) "The option `legacyRenderer` has been removed. Legacy renderer is no longer supported.";
+  assert assertMsg (!withHyprtester) "The option `withHyprtester` has been removed. Hyprtester is always built now.";
     customStdenv.mkDerivation (finalAttrs: {
       pname = "hyprland${optionalString debug "-debug"}";
       inherit version;
 
-      src = cleanSourceWith {
-        filter = name: _type: let
-          baseName = baseNameOf (toString name);
-        in
-          ! (hasSuffix ".nix" baseName);
-        src = cleanSource ../.;
+      src = fs.toSource {
+        root = ../.;
+        fileset =
+          fs.intersection
+          # allows non-flake builds to only include files tracked by git
+          (fs.gitTracked ../.)
+          (fs.unions (flatten [
+            ../assets/hyprland-portals.conf
+            ../assets/install
+            ../hyprctl
+            ../hyprland.pc.in
+            ../hyprtester
+            ../LICENSE
+            ../protocols
+            ../src
+            ../systemd
+            ../VERSION
+            (fs.fileFilter (file: file.hasExt "1") ../docs)
+            (fs.fileFilter (file: file.hasExt "conf" || file.hasExt "desktop") ../example)
+            (fs.fileFilter (file: file.hasExt "sh") ../scripts)
+            (fs.fileFilter (file: file.name == "CMakeLists.txt") ../.)
+          ]));
       };
 
       postPatch = ''
@@ -89,11 +108,13 @@ in
         sed -i "s#@PREFIX@/##g" hyprland.pc.in
       '';
 
-      COMMITS = revCount;
-      DATE = date;
-      DIRTY = optionalString (commit == "") "dirty";
-      HASH = commit;
-      TAG = "v${trim (readFile "${finalAttrs.src}/VERSION")}";
+      env = {
+        GIT_COMMITS = revCount;
+        GIT_COMMIT_DATE = date;
+        GIT_COMMIT_HASH = commit;
+        GIT_DIRTY = if (commit == "") then "clean" else "dirty";
+        GIT_TAG = "v${trim (readFile "${finalAttrs.src}/VERSION")}";
+      };
 
       depsBuildBuild = [
         pkg-config
@@ -102,9 +123,7 @@ in
       nativeBuildInputs = [
         hyprwayland-scanner
         makeWrapper
-        meson
-        ninja
-        cmake # needed for glaze
+        cmake
         pkg-config
       ];
 
@@ -130,7 +149,8 @@ in
           libinput
           libuuid
           libxkbcommon
-          mesa
+          libgbm
+          muparser
           pango
           pciutils
           re2
@@ -141,6 +161,7 @@ in
           wayland-scanner
           xorg.libXcursor
         ]
+        (optionals customStdenv.hostPlatform.isBSD [epoll-shim])
         (optionals customStdenv.hostPlatform.isMusl [libexecinfo])
         (optionals enableXWayland [
           xorg.libxcb
@@ -153,33 +174,46 @@ in
         (optional withSystemd systemd)
       ];
 
-      mesonBuildType =
-        if debug
-        then "debugoptimized"
-        else "release";
+      strictDeps = true;
 
-      mesonFlags = flatten [
-        (mapAttrsToList mesonEnable {
-          "xwayland" = enableXWayland;
-          "legacy_renderer" = legacyRenderer;
-          "uwsm" = false;
-        })
-        (mapAttrsToList mesonBool {
-          "b_pch" = false;
-          "tracy_enable" = false;
-        })
-      ];
+      cmakeBuildType =
+        if debug
+        then "Debug"
+        else "RelWithDebInfo";
+
+      # we want as much debug info as possible
+      dontStrip = debug;
+
+      cmakeFlags = mapAttrsToList cmakeBool {
+        "NO_XWAYLAND" = !enableXWayland;
+        "LEGACY_RENDERER" = legacyRenderer;
+        "NO_SYSTEMD" = !withSystemd;
+        "CMAKE_DISABLE_PRECOMPILE_HEADERS" = true;
+        "NO_UWSM" = true;
+        "NO_HYPRPM" = true;
+        "TRACY_ENABLE" = false;
+        "BUILD_HYPRTESTER" = true;
+      };
+
+      preConfigure = ''
+        substituteInPlace hyprtester/CMakeLists.txt --replace-fail \
+          "\''${CMAKE_CURRENT_BINARY_DIR}" \
+          "${placeholder "out"}/bin"
+      '';
 
       postInstall = ''
         ${optionalString wrapRuntimeDeps ''
           wrapProgram $out/bin/Hyprland \
             --suffix PATH : ${makeBinPath [
             binutils
-            hyprland-qtutils
+            hyprland-guiutils
             pciutils
             pkgconf
           ]}
         ''}
+
+        install hyprtester/pointer-warp -t $out/bin
+        install hyprtester/pointer-scroll -t $out/bin
       '';
 
       passthru.providedSessions = ["hyprland"];

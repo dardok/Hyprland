@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <utility>
@@ -40,6 +41,8 @@ struct SHyprlandVersion {
 
 class CPluginManager {
   public:
+    CPluginManager();
+
     bool                   addNewPluginRepo(const std::string& url, const std::string& rev);
     bool                   removePluginRepo(const std::string& urlOrName);
 
@@ -62,6 +65,7 @@ class CPluginManager {
 
     bool                   m_bVerbose   = false;
     bool                   m_bNoShallow = false;
+    std::string            m_szCustomHlUrl, m_szUsername;
 
     // will delete recursively if exists!!
     bool createSafeDirectory(const std::string& path);

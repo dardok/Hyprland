@@ -5,7 +5,7 @@
 class CHyprDropShadowDecoration : public IHyprWindowDecoration {
   public:
     CHyprDropShadowDecoration(PHLWINDOW);
-    virtual ~CHyprDropShadowDecoration();
+    virtual ~CHyprDropShadowDecoration() = default;
 
     virtual SDecorationPositioningInfo getPositioningInfo();
 
@@ -28,16 +28,16 @@ class CHyprDropShadowDecoration : public IHyprWindowDecoration {
     void                               render(PHLMONITOR, float const& a);
 
   private:
-    SBoxExtents  m_seExtents;
-    SBoxExtents  m_seReportedExtents;
+    SBoxExtents  m_extents;
+    SBoxExtents  m_reportedExtents;
 
-    PHLWINDOWREF m_pWindow;
+    PHLWINDOWREF m_window;
 
-    Vector2D     m_vLastWindowPos;
-    Vector2D     m_vLastWindowSize;
+    Vector2D     m_lastWindowPos;
+    Vector2D     m_lastWindowSize;
 
-    void         drawShadowInternal(CBox* box, int round, float roundingPower, int range, CHyprColor color, float a);
+    void         drawShadowInternal(const CBox& box, int round, float roundingPower, int range, CHyprColor color, float a);
 
-    CBox         m_bLastWindowBox          = {0};
-    CBox         m_bLastWindowBoxWithDecos = {0};
+    CBox         m_lastWindowBox          = {0};
+    CBox         m_lastWindowBoxWithDecos = {0};
 };

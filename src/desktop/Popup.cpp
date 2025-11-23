@@ -1,196 +1,276 @@
 #include "Popup.hpp"
 #include "../config/ConfigValue.hpp"
+#include "../config/ConfigManager.hpp"
 #include "../Compositor.hpp"
 #include "../protocols/LayerShell.hpp"
 #include "../protocols/XDGShell.hpp"
 #include "../protocols/core/Compositor.hpp"
 #include "../managers/SeatManager.hpp"
-#include "../managers/eventLoop/EventLoopManager.hpp"
+#include "../managers/animation/AnimationManager.hpp"
+#include "../desktop/LayerSurface.hpp"
+#include "../managers/input/InputManager.hpp"
+#include "../render/Renderer.hpp"
+#include "../render/OpenGL.hpp"
 #include <ranges>
 
-CPopup::CPopup(PHLWINDOW pOwner) : m_pWindowOwner(pOwner) {
-    initAllSignals();
+UP<CPopup> CPopup::create(PHLWINDOW pOwner) {
+    auto popup           = UP<CPopup>(new CPopup());
+    popup->m_windowOwner = pOwner;
+    popup->m_self        = popup;
+    popup->initAllSignals();
+    return popup;
 }
 
-CPopup::CPopup(PHLLS pOwner) : m_pLayerOwner(pOwner) {
-    initAllSignals();
+UP<CPopup> CPopup::create(PHLLS pOwner) {
+    auto popup          = UP<CPopup>(new CPopup());
+    popup->m_layerOwner = pOwner;
+    popup->m_self       = popup;
+    popup->initAllSignals();
+    return popup;
 }
 
-CPopup::CPopup(SP<CXDGPopupResource> popup, CPopup* pOwner) : m_pWindowOwner(pOwner->m_pWindowOwner), m_pLayerOwner(pOwner->m_pLayerOwner), m_pParent(pOwner), m_pResource(popup) {
-    m_pWLSurface = CWLSurface::create();
-    m_pWLSurface->assign(popup->surface->surface.lock(), this);
+UP<CPopup> CPopup::create(SP<CXDGPopupResource> resource, WP<CPopup> pOwner) {
+    auto popup           = UP<CPopup>(new CPopup());
+    popup->m_resource    = resource;
+    popup->m_windowOwner = pOwner->m_windowOwner;
+    popup->m_layerOwner  = pOwner->m_layerOwner;
+    popup->m_parent      = pOwner;
+    popup->m_self        = popup;
+    popup->m_wlSurface   = CWLSurface::create();
+    popup->m_wlSurface->assign(resource->m_surface->m_surface.lock(), popup.get());
 
-    m_vLastSize = popup->surface->current.geometry.size();
-    reposition();
+    popup->m_lastSize = resource->m_surface->m_current.geometry.size();
+    popup->reposition();
 
-    initAllSignals();
+    popup->initAllSignals();
+    return popup;
 }
 
 CPopup::~CPopup() {
-    if (m_pWLSurface)
-        m_pWLSurface->unassign();
+    if (m_wlSurface)
+        m_wlSurface->unassign();
 }
 
 void CPopup::initAllSignals() {
 
-    if (!m_pResource) {
-        if (!m_pWindowOwner.expired())
-            listeners.newPopup = m_pWindowOwner->m_pXDGSurface->events.newPopup.registerListener([this](std::any d) { this->onNewPopup(std::any_cast<SP<CXDGPopupResource>>(d)); });
-        else if (!m_pLayerOwner.expired())
-            listeners.newPopup = m_pLayerOwner->layerSurface->events.newPopup.registerListener([this](std::any d) { this->onNewPopup(std::any_cast<SP<CXDGPopupResource>>(d)); });
+    g_pAnimationManager->createAnimation(0.f, m_alpha, g_pConfigManager->getAnimationPropertyConfig("fadePopupsIn"), AVARDAMAGE_NONE);
+    m_alpha->setUpdateCallback([this](auto) {
+        //
+        g_pHyprRenderer->damageBox(CBox{coordsGlobal(), size()});
+    });
+    m_alpha->setCallbackOnEnd(
+        [this](auto) {
+            if (inert()) {
+                g_pHyprRenderer->damageBox(CBox{coordsGlobal(), size()});
+                fullyDestroy();
+            }
+        },
+        false);
+
+    if (!m_resource) {
+        if (!m_windowOwner.expired())
+            m_listeners.newPopup = m_windowOwner->m_xdgSurface->m_events.newPopup.listen([this](const auto& resource) { this->onNewPopup(resource); });
+        else if (!m_layerOwner.expired())
+            m_listeners.newPopup = m_layerOwner->m_layerSurface->m_events.newPopup.listen([this](const auto& resource) { this->onNewPopup(resource); });
         else
             ASSERT(false);
 
         return;
     }
 
-    listeners.reposition = m_pResource->events.reposition.registerListener([this](std::any d) { this->onReposition(); });
-    listeners.map        = m_pResource->surface->events.map.registerListener([this](std::any d) { this->onMap(); });
-    listeners.unmap      = m_pResource->surface->events.unmap.registerListener([this](std::any d) { this->onUnmap(); });
-    listeners.dismissed  = m_pResource->events.dismissed.registerListener([this](std::any d) { this->onUnmap(); });
-    listeners.destroy    = m_pResource->surface->events.destroy.registerListener([this](std::any d) { this->onDestroy(); });
-    listeners.commit     = m_pResource->surface->events.commit.registerListener([this](std::any d) { this->onCommit(); });
-    listeners.newPopup   = m_pResource->surface->events.newPopup.registerListener([this](std::any d) { this->onNewPopup(std::any_cast<SP<CXDGPopupResource>>(d)); });
+    m_listeners.reposition = m_resource->m_events.reposition.listen([this] { this->onReposition(); });
+    m_listeners.map        = m_resource->m_surface->m_events.map.listen([this] { this->onMap(); });
+    m_listeners.unmap      = m_resource->m_surface->m_events.unmap.listen([this] { this->onUnmap(); });
+    m_listeners.dismissed  = m_resource->m_events.dismissed.listen([this] { this->onUnmap(); });
+    m_listeners.destroy    = m_resource->m_surface->m_events.destroy.listen([this] { this->onDestroy(); });
+    m_listeners.commit     = m_resource->m_surface->m_events.commit.listen([this] { this->onCommit(); });
+    m_listeners.newPopup   = m_resource->m_surface->m_events.newPopup.listen([this](const auto& resource) { this->onNewPopup(resource); });
 }
 
 void CPopup::onNewPopup(SP<CXDGPopupResource> popup) {
-    const auto POPUP = m_vChildren.emplace_back(makeShared<CPopup>(popup, this)).get();
-    Debug::log(LOG, "New popup at {:x}", (uintptr_t)POPUP);
+    const auto& POPUP = m_children.emplace_back(CPopup::create(popup, m_self));
+    POPUP->m_self     = POPUP;
+    Debug::log(LOG, "New popup at {:x}", rc<uintptr_t>(this));
 }
 
 void CPopup::onDestroy() {
-    m_bInert = true;
+    m_inert = true;
 
-    if (!m_pParent)
+    if (!m_parent)
         return; // head node
 
-    std::erase_if(m_pParent->m_vChildren, [this](const auto& other) { return other.get() == this; });
+    m_subsurfaceHead.reset();
+    m_children.clear();
+    m_wlSurface.reset();
+
+    if (m_fadingOut && m_alpha->isBeingAnimated()) {
+        Debug::log(LOG, "popup {:x}: skipping full destroy, animating", rc<uintptr_t>(this));
+        return;
+    }
+
+    fullyDestroy();
+}
+
+void CPopup::fullyDestroy() {
+    Debug::log(LOG, "popup {:x} fully destroying", rc<uintptr_t>(this));
+
+    g_pHyprRenderer->makeEGLCurrent();
+    std::erase_if(g_pHyprOpenGL->m_popupFramebuffers, [&](const auto& other) { return other.first.expired() || other.first == m_self; });
+
+    std::erase_if(m_parent->m_children, [this](const auto& other) { return other.get() == this; });
 }
 
 void CPopup::onMap() {
-    if (m_bMapped)
+    if (m_mapped)
         return;
 
-    m_bMapped   = true;
-    m_vLastSize = m_pResource->surface->surface->current.size;
+    m_mapped   = true;
+    m_lastSize = m_resource->m_surface->m_surface->m_current.size;
 
     const auto COORDS   = coordsGlobal();
     const auto PMONITOR = g_pCompositor->getMonitorFromVector(COORDS);
 
-    CBox       box = m_pWLSurface->resource()->extends();
+    CBox       box = m_wlSurface->resource()->extends();
     box.translate(COORDS).expand(4);
-    g_pHyprRenderer->damageBox(&box);
+    g_pHyprRenderer->damageBox(box);
 
-    m_vLastPos = coordsRelativeToParent();
+    m_lastPos = coordsRelativeToParent();
 
     g_pInputManager->simulateMouseMovement();
 
-    m_pSubsurfaceHead = std::make_unique<CSubsurface>(this);
+    m_subsurfaceHead = CSubsurface::create(m_self);
 
     //unconstrain();
     sendScale();
-    m_pResource->surface->surface->enter(PMONITOR->self.lock());
+    m_resource->m_surface->m_surface->enter(PMONITOR->m_self.lock());
 
-    if (!m_pLayerOwner.expired() && m_pLayerOwner->layer < ZWLR_LAYER_SHELL_V1_LAYER_TOP)
-        g_pHyprOpenGL->markBlurDirtyForMonitor(g_pCompositor->getMonitorFromID(m_pLayerOwner->layer));
+    if (!m_layerOwner.expired() && m_layerOwner->m_layer < ZWLR_LAYER_SHELL_V1_LAYER_TOP)
+        g_pHyprOpenGL->markBlurDirtyForMonitor(g_pCompositor->getMonitorFromID(m_layerOwner->m_layer));
+
+    m_alpha->setConfig(g_pConfigManager->getAnimationPropertyConfig("fadePopupsIn"));
+    m_alpha->setValueAndWarp(0.F);
+    *m_alpha = 1.F;
+
+    Debug::log(LOG, "popup {:x}: mapped", rc<uintptr_t>(this));
 }
 
 void CPopup::onUnmap() {
-    if (!m_bMapped)
+    if (!m_mapped)
         return;
 
-    if (!m_pResource || !m_pResource->surface) {
+    if (!m_resource || !m_resource->m_surface) {
         Debug::log(ERR, "CPopup: orphaned (no surface/resource) and unmaps??");
         onDestroy();
         return;
     }
 
-    m_bMapped = false;
+    Debug::log(LOG, "popup {:x}: unmapped", rc<uintptr_t>(this));
 
-    m_vLastSize = m_pResource->surface->surface->current.size;
+    // if the popup committed a different size right now, we also need to damage the old size.
+    const Vector2D MAX_DAMAGE_SIZE = {std::max(m_lastSize.x, m_resource->m_surface->m_surface->m_current.size.x),
+                                      std::max(m_lastSize.y, m_resource->m_surface->m_surface->m_current.size.y)};
+
+    m_lastSize = m_resource->m_surface->m_surface->m_current.size;
+    m_lastPos  = coordsRelativeToParent();
 
     const auto COORDS = coordsGlobal();
 
-    CBox       box = m_pWLSurface->resource()->extends();
+    CBox       box = m_wlSurface->resource()->extends();
     box.translate(COORDS).expand(4);
-    g_pHyprRenderer->damageBox(&box);
+    g_pHyprRenderer->damageBox(box);
 
-    m_pSubsurfaceHead.reset();
+    // damage the last popup's explicit max size as well
+    box = CBox{COORDS, MAX_DAMAGE_SIZE}.expand(4);
+    g_pHyprRenderer->damageBox(box);
 
-    if (!m_pLayerOwner.expired() && m_pLayerOwner->layer < ZWLR_LAYER_SHELL_V1_LAYER_TOP)
-        g_pHyprOpenGL->markBlurDirtyForMonitor(g_pCompositor->getMonitorFromID(m_pLayerOwner->layer));
+    m_lastSize = MAX_DAMAGE_SIZE;
+
+    g_pHyprRenderer->makeSnapshot(m_self);
+
+    m_fadingOut = true;
+    m_alpha->setConfig(g_pConfigManager->getAnimationPropertyConfig("fadePopupsOut"));
+    m_alpha->setValueAndWarp(1.F);
+    *m_alpha = 0.F;
+
+    m_mapped = false;
+
+    m_subsurfaceHead.reset();
+
+    if (!m_layerOwner.expired() && m_layerOwner->m_layer < ZWLR_LAYER_SHELL_V1_LAYER_TOP)
+        g_pHyprOpenGL->markBlurDirtyForMonitor(g_pCompositor->getMonitorFromID(m_layerOwner->m_layer));
 
     // damage all children
     breadthfirst(
-        [](CPopup* p, void* data) {
-            if (!p->m_pResource)
+        [](WP<CPopup> p, void* data) {
+            if (!p->m_resource)
                 return;
 
             auto box = CBox{p->coordsGlobal(), p->size()};
-            g_pHyprRenderer->damageBox(&box);
+            g_pHyprRenderer->damageBox(box);
         },
         nullptr);
 
-    const bool WASLASTFOCUS = g_pSeatManager->state.keyboardFocus == m_pWLSurface->resource() || g_pSeatManager->state.pointerFocus == m_pWLSurface->resource();
+    // TODO: probably refocus, but without a motion event?
+    // const bool WASLASTFOCUS = g_pSeatManager->state.keyboardFocus == m_pWLSurface->resource() || g_pSeatManager->state.pointerFocus == m_pWLSurface->resource();
 
-    if (WASLASTFOCUS)
-        g_pInputManager->simulateMouseMovement();
+    // if (WASLASTFOCUS)
+    //     g_pInputManager->simulateMouseMovement();
 }
 
 void CPopup::onCommit(bool ignoreSiblings) {
-    if (!m_pResource || !m_pResource->surface) {
+    if (!m_resource || !m_resource->m_surface) {
         Debug::log(ERR, "CPopup: orphaned (no surface/resource) and commits??");
         onDestroy();
         return;
     }
 
-    if (m_pResource->surface->initialCommit) {
-        m_pResource->surface->scheduleConfigure();
+    if (m_resource->m_surface->m_initialCommit) {
+        m_resource->m_surface->scheduleConfigure();
         return;
     }
 
-    if (!m_pWindowOwner.expired() && (!m_pWindowOwner->m_bIsMapped || !m_pWindowOwner->m_pWorkspace->m_bVisible)) {
-        m_vLastSize = m_pResource->surface->surface->current.size;
+    if (!m_windowOwner.expired() && (!m_windowOwner->m_isMapped || !m_windowOwner->m_workspace->m_visible)) {
+        m_lastSize = m_resource->m_surface->m_surface->m_current.size;
 
         static auto PLOGDAMAGE = CConfigValue<Hyprlang::INT>("debug:log_damage");
         if (*PLOGDAMAGE)
-            Debug::log(LOG, "Refusing to commit damage from a subsurface of {} because it's invisible.", m_pWindowOwner.lock());
+            Debug::log(LOG, "Refusing to commit damage from a subsurface of {} because it's invisible.", m_windowOwner.lock());
         return;
     }
 
-    if (!m_pResource->surface->mapped)
+    if (!m_resource->m_surface->m_mapped)
         return;
 
     const auto COORDS      = coordsGlobal();
     const auto COORDSLOCAL = coordsRelativeToParent();
 
-    if (m_vLastSize != m_pResource->surface->surface->current.size || m_bRequestedReposition || m_vLastPos != COORDSLOCAL) {
-        CBox box = {localToGlobal(m_vLastPos), m_vLastSize};
-        g_pHyprRenderer->damageBox(&box);
-        m_vLastSize = m_pResource->surface->surface->current.size;
-        box         = {COORDS, m_vLastSize};
-        g_pHyprRenderer->damageBox(&box);
+    if (m_lastSize != m_resource->m_surface->m_surface->m_current.size || m_requestedReposition || m_lastPos != COORDSLOCAL) {
+        CBox box = {localToGlobal(m_lastPos), m_lastSize};
+        g_pHyprRenderer->damageBox(box);
+        m_lastSize = m_resource->m_surface->m_surface->m_current.size;
+        box        = {COORDS, m_lastSize};
+        g_pHyprRenderer->damageBox(box);
 
-        m_vLastPos = COORDSLOCAL;
+        m_lastPos = COORDSLOCAL;
     }
 
-    if (!ignoreSiblings && m_pSubsurfaceHead)
-        m_pSubsurfaceHead->recheckDamageForSubsurfaces();
+    if (!ignoreSiblings && m_subsurfaceHead)
+        m_subsurfaceHead->recheckDamageForSubsurfaces();
 
-    g_pHyprRenderer->damageSurface(m_pWLSurface->resource(), COORDS.x, COORDS.y);
+    g_pHyprRenderer->damageSurface(m_wlSurface->resource(), COORDS.x, COORDS.y);
 
-    m_bRequestedReposition = false;
+    m_requestedReposition = false;
 
-    if (!m_pLayerOwner.expired() && m_pLayerOwner->layer < ZWLR_LAYER_SHELL_V1_LAYER_TOP)
-        g_pHyprOpenGL->markBlurDirtyForMonitor(g_pCompositor->getMonitorFromID(m_pLayerOwner->layer));
+    if (!m_layerOwner.expired() && m_layerOwner->m_layer < ZWLR_LAYER_SHELL_V1_LAYER_TOP)
+        g_pHyprOpenGL->markBlurDirtyForMonitor(g_pCompositor->getMonitorFromID(m_layerOwner->m_layer));
 }
 
 void CPopup::onReposition() {
-    Debug::log(LOG, "Popup {:x} requests reposition", (uintptr_t)this);
+    Debug::log(LOG, "Popup {:x} requests reposition", rc<uintptr_t>(this));
 
-    m_bRequestedReposition = true;
+    m_requestedReposition = true;
 
-    m_vLastPos = coordsRelativeToParent();
+    m_lastPos = coordsRelativeToParent();
 
     reposition();
 }
@@ -202,32 +282,32 @@ void CPopup::reposition() {
     if (!PMONITOR)
         return;
 
-    CBox box = {PMONITOR->vecPosition.x, PMONITOR->vecPosition.y, PMONITOR->vecSize.x, PMONITOR->vecSize.y};
-    m_pResource->applyPositioning(box, COORDS);
+    CBox box = {PMONITOR->m_position.x, PMONITOR->m_position.y, PMONITOR->m_size.x, PMONITOR->m_size.y};
+    m_resource->applyPositioning(box, COORDS);
 }
 
 SP<CWLSurface> CPopup::getT1Owner() {
-    if (m_pWindowOwner)
-        return m_pWindowOwner->m_pWLSurface;
+    if (m_windowOwner)
+        return m_windowOwner->m_wlSurface;
     else
-        return m_pLayerOwner->surface;
+        return m_layerOwner->m_surface;
 }
 
 Vector2D CPopup::coordsRelativeToParent() {
     Vector2D offset;
 
-    if (!m_pResource)
-        return {};
+    if (!m_resource)
+        return m_lastPos;
 
-    CPopup* current = this;
-    offset -= current->m_pResource->surface->current.geometry.pos();
+    WP<CPopup> current = m_self;
+    offset -= current->m_resource->m_surface->m_current.geometry.pos();
 
-    while (current->m_pParent && current->m_pResource) {
+    while (current->m_parent && current->m_resource) {
 
-        offset += current->m_pWLSurface->resource()->current.offset;
-        offset += current->m_pResource->geometry.pos();
+        offset += current->m_wlSurface->resource()->m_current.offset;
+        offset += current->m_resource->m_geometry.pos();
 
-        current = current->m_pParent;
+        current = current->m_parent;
     }
 
     return offset;
@@ -242,26 +322,30 @@ Vector2D CPopup::localToGlobal(const Vector2D& rel) {
 }
 
 Vector2D CPopup::t1ParentCoords() {
-    if (!m_pWindowOwner.expired())
-        return m_pWindowOwner->m_vRealPosition->value();
-    if (!m_pLayerOwner.expired())
-        return m_pLayerOwner->realPosition->value();
+    if (!m_windowOwner.expired())
+        return m_windowOwner->m_realPosition->value();
+    if (!m_layerOwner.expired())
+        return m_layerOwner->m_realPosition->value();
 
     ASSERT(false);
     return {};
 }
 
 void CPopup::recheckTree() {
-    CPopup* curr = this;
-    while (curr->m_pParent) {
-        curr = curr->m_pParent;
+    WP<CPopup> curr = m_self;
+    while (curr->m_parent) {
+        curr = curr->m_parent;
     }
 
     curr->recheckChildrenRecursive();
 }
 
 void CPopup::recheckChildrenRecursive() {
-    auto cpy = m_vChildren;
+    if (m_inert || !m_wlSurface)
+        return;
+
+    std::vector<WP<CPopup>> cpy;
+    std::ranges::for_each(m_children, [&cpy](const auto& el) { cpy.emplace_back(el); });
     for (auto const& c : cpy) {
         c->onCommit(true);
         c->recheckChildrenRecursive();
@@ -269,40 +353,43 @@ void CPopup::recheckChildrenRecursive() {
 }
 
 Vector2D CPopup::size() {
-    return m_vLastSize;
+    return m_lastSize;
 }
 
 void CPopup::sendScale() {
-    if (!m_pWindowOwner.expired())
-        g_pCompositor->setPreferredScaleForSurface(m_pWLSurface->resource(), m_pWindowOwner->m_pWLSurface->m_fLastScale);
-    else if (!m_pLayerOwner.expired())
-        g_pCompositor->setPreferredScaleForSurface(m_pWLSurface->resource(), m_pLayerOwner->surface->m_fLastScale);
+    if (!m_windowOwner.expired())
+        g_pCompositor->setPreferredScaleForSurface(m_wlSurface->resource(), m_windowOwner->m_wlSurface->m_lastScaleFloat);
+    else if (!m_layerOwner.expired())
+        g_pCompositor->setPreferredScaleForSurface(m_wlSurface->resource(), m_layerOwner->m_surface->m_lastScaleFloat);
     else
         UNREACHABLE();
 }
 
 bool CPopup::visible() {
-    if (!m_pWindowOwner.expired())
-        return g_pHyprRenderer->shouldRenderWindow(m_pWindowOwner.lock());
-    if (!m_pLayerOwner.expired())
+    if (!m_windowOwner.expired())
+        return g_pHyprRenderer->shouldRenderWindow(m_windowOwner.lock());
+    if (!m_layerOwner.expired())
         return true;
-    if (m_pParent)
-        return m_pParent->visible();
+    if (m_parent)
+        return m_parent->visible();
 
     return false;
 }
 
-void CPopup::bfHelper(std::vector<CPopup*> const& nodes, std::function<void(CPopup*, void*)> fn, void* data) {
+void CPopup::bfHelper(std::vector<WP<CPopup>> const& nodes, std::function<void(WP<CPopup>, void*)> fn, void* data) {
     for (auto const& n : nodes) {
         fn(n, data);
     }
 
-    std::vector<CPopup*> nodes2;
+    std::vector<WP<CPopup>> nodes2;
     nodes2.reserve(nodes.size() * 2);
 
     for (auto const& n : nodes) {
-        for (auto const& c : n->m_vChildren) {
-            nodes2.push_back(c.get());
+        if (!n)
+            continue;
+
+        for (auto const& c : n->m_children) {
+            nodes2.push_back(c->m_self);
         }
     }
 
@@ -310,35 +397,53 @@ void CPopup::bfHelper(std::vector<CPopup*> const& nodes, std::function<void(CPop
         bfHelper(nodes2, fn, data);
 }
 
-void CPopup::breadthfirst(std::function<void(CPopup*, void*)> fn, void* data) {
-    std::vector<CPopup*> popups;
-    popups.push_back(this);
+void CPopup::breadthfirst(std::function<void(WP<CPopup>, void*)> fn, void* data) {
+    if (!m_self)
+        return;
+
+    std::vector<WP<CPopup>> popups;
+    popups.push_back(m_self);
     bfHelper(popups, fn, data);
 }
 
-CPopup* CPopup::at(const Vector2D& globalCoords, bool allowsInput) {
-    std::vector<CPopup*> popups;
-    breadthfirst([](CPopup* popup, void* data) { ((std::vector<CPopup*>*)data)->push_back(popup); }, &popups);
+WP<CPopup> CPopup::at(const Vector2D& globalCoords, bool allowsInput) {
+    std::vector<WP<CPopup>> popups;
+    breadthfirst([&popups](WP<CPopup> popup, void* data) { popups.push_back(popup); }, &popups);
 
     for (auto const& p : popups | std::views::reverse) {
-        if (!p->m_pResource || !p->m_bMapped)
+        if (!p->m_resource || !p->m_mapped)
             continue;
 
         if (!allowsInput) {
-            const Vector2D offset = p->m_pResource ? (p->size() - p->m_pResource->geometry.size()) / 2.F : Vector2D{};
-            const Vector2D size   = p->m_pResource ? p->m_pResource->geometry.size() : p->size();
+            const bool HASSURFACE = p->m_resource && p->m_resource->m_surface;
 
-            const auto     BOX = CBox{p->coordsGlobal() + offset, size};
+            Vector2D   offset = HASSURFACE ? p->m_resource->m_surface->m_current.geometry.pos() : Vector2D{};
+            Vector2D   size   = HASSURFACE ? p->m_resource->m_surface->m_current.geometry.size() : p->size();
+
+            if (size == Vector2D{})
+                size = p->size();
+
+            const auto BOX = CBox{p->coordsGlobal() + offset, size};
             if (BOX.containsPoint(globalCoords))
                 return p;
         } else {
-            const Vector2D offset = p->m_pResource ? (p->size() - p->m_pResource->geometry.size()) / 2.F : Vector2D{};
-            const auto     REGION =
-                CRegion{p->m_pWLSurface->resource()->current.input}.intersect(CBox{{}, p->m_pWLSurface->resource()->current.size}).translate(p->coordsGlobal() + offset);
+            const auto REGION = CRegion{p->m_wlSurface->resource()->m_current.input}.intersect(CBox{{}, p->m_wlSurface->resource()->m_current.size}).translate(p->coordsGlobal());
             if (REGION.containsPoint(globalCoords))
                 return p;
         }
     }
 
+    return {};
+}
+
+bool CPopup::inert() const {
+    return m_inert;
+}
+
+PHLMONITOR CPopup::getMonitor() {
+    if (!m_windowOwner.expired())
+        return m_windowOwner->m_monitor.lock();
+    if (!m_layerOwner.expired())
+        return m_layerOwner->m_monitor.lock();
     return nullptr;
 }

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../defines.hpp"
+#include "../managers/input/InputManager.hpp"
 #include <any>
 
 class CWindow;
@@ -25,6 +26,14 @@ enum eRectCorner : uint8_t {
     CORNER_BOTTOMLEFT  = (1 << 3),
 };
 
+inline eRectCorner cornerFromBox(const CBox& box, const Vector2D& pos) {
+    const auto CENTER = box.middle();
+
+    if (pos.x < CENTER.x)
+        return pos.y < CENTER.y ? CORNER_TOPLEFT : CORNER_BOTTOMLEFT;
+    return pos.y < CENTER.y ? CORNER_TOPRIGHT : CORNER_BOTTOMRIGHT;
+}
+
 enum eSnapEdge : uint8_t {
     SNAP_INVALID = 0,
     SNAP_UP      = (1 << 0),
@@ -43,7 +52,7 @@ enum eDirection : int8_t {
 
 class IHyprLayout {
   public:
-    virtual ~IHyprLayout()   = 0;
+    virtual ~IHyprLayout()   = default;
     virtual void onEnable()  = 0;
     virtual void onDisable() = 0;
 
@@ -204,14 +213,31 @@ class IHyprLayout {
     virtual Vector2D predictSizeForNewWindow(PHLWINDOW pWindow);
     virtual Vector2D predictSizeForNewWindowFloating(PHLWINDOW pWindow);
 
-  private:
-    int          m_iMouseMoveEventCount;
-    Vector2D     m_vBeginDragXY;
-    Vector2D     m_vLastDragXY;
-    Vector2D     m_vBeginDragPositionXY;
-    Vector2D     m_vBeginDragSizeXY;
-    Vector2D     m_vDraggingWindowOriginalFloatSize;
-    eRectCorner  m_eGrabbedCorner = CORNER_TOPLEFT;
+    /*
+        Called to try to pick up window for dragging.
+        Updates drag related variables and floats window if threshold reached.
+        Return true to reject
+    */
+    virtual bool updateDragWindow();
 
-    PHLWINDOWREF m_pLastTiledWindow;
+    /*
+        Triggers a window snap event
+    */
+    virtual void performSnap(Vector2D& sourcePos, Vector2D& sourceSize, PHLWINDOW DRAGGINGWINDOW, const eMouseBindMode MODE, const int CORNER, const Vector2D& BEGINSIZE);
+
+    /*
+        Fits a floating window on its monitor
+    */
+    virtual void fitFloatingWindowOnMonitor(PHLWINDOW w, std::optional<CBox> targetBox = std::nullopt);
+
+  private:
+    int          m_mouseMoveEventCount;
+    Vector2D     m_beginDragXY;
+    Vector2D     m_lastDragXY;
+    Vector2D     m_beginDragPositionXY;
+    Vector2D     m_beginDragSizeXY;
+    Vector2D     m_draggingWindowOriginalFloatSize;
+    eRectCorner  m_grabbedCorner = CORNER_TOPLEFT;
+
+    PHLWINDOWREF m_lastTiledWindow;
 };

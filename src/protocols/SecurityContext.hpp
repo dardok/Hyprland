@@ -1,30 +1,35 @@
 #pragma once
 
-#include <memory>
 #include <vector>
 #include <cstdint>
 #include "WaylandProtocol.hpp"
 #include "security-context-v1.hpp"
+#include <hyprutils/os/FileDescriptor.hpp>
 
 class CSecurityContext {
   public:
     CSecurityContext(SP<CWpSecurityContextV1> resource_, int listenFD_, int closeFD_);
     ~CSecurityContext();
 
-    bool        good();
+    bool                           good();
 
-    std::string sandboxEngine, appID, instanceID;
-    int         listenFD = -1, closeFD = -1;
+    std::string                    m_sandboxEngine;
+    std::string                    m_appID;
+    std::string                    m_instanceID;
 
-    void        onListen(uint32_t mask);
-    void        onClose(uint32_t mask);
+    Hyprutils::OS::CFileDescriptor m_listenFD;
+    Hyprutils::OS::CFileDescriptor m_closeFD;
+
+    void                           onListen(uint32_t mask);
+    void                           onClose(uint32_t mask);
 
   private:
-    SP<CWpSecurityContextV1> resource;
+    SP<CWpSecurityContextV1> m_resource;
 
-    wl_event_source *        listenSource = nullptr, *closeSource = nullptr;
+    wl_event_source*         m_listenSource = nullptr;
+    wl_event_source*         m_closeSource  = nullptr;
 
-    bool                     committed = false;
+    bool                     m_committed = false;
 };
 
 class CSecurityContextManagerResource {
@@ -34,7 +39,7 @@ class CSecurityContextManagerResource {
     bool good();
 
   private:
-    SP<CWpSecurityContextManagerV1> resource;
+    SP<CWpSecurityContextManagerV1> m_resource;
 };
 
 class CSecurityContextSandboxedClient;
@@ -45,18 +50,18 @@ struct SCSecurityContextSandboxedClientDestroyWrapper {
 
 class CSecurityContextSandboxedClient {
   public:
-    static SP<CSecurityContextSandboxedClient> create(int clientFD);
+    static SP<CSecurityContextSandboxedClient> create(Hyprutils::OS::CFileDescriptor clientFD);
     ~CSecurityContextSandboxedClient();
 
     void                                           onDestroy();
 
-    SCSecurityContextSandboxedClientDestroyWrapper destroyListener;
+    SCSecurityContextSandboxedClientDestroyWrapper m_destroyListener;
 
   private:
-    CSecurityContextSandboxedClient(int clientFD_);
+    CSecurityContextSandboxedClient(Hyprutils::OS::CFileDescriptor clientFD_);
 
-    wl_client* client   = nullptr;
-    int        clientFD = -1;
+    wl_client*                     m_client = nullptr;
+    Hyprutils::OS::CFileDescriptor m_clientFD;
 
     friend class CSecurityContextProtocol;
     friend class CSecurityContext;
@@ -76,9 +81,9 @@ class CSecurityContextProtocol : public IWaylandProtocol {
     void destroyContext(CSecurityContext* context);
 
     //
-    std::vector<SP<CSecurityContextManagerResource>> m_vManagers;
-    std::vector<SP<CSecurityContext>>                m_vContexts;
-    std::vector<SP<CSecurityContextSandboxedClient>> m_vSandboxedClients;
+    std::vector<SP<CSecurityContextManagerResource>> m_managers;
+    std::vector<SP<CSecurityContext>>                m_contexts;
+    std::vector<SP<CSecurityContextSandboxedClient>> m_sandboxedClients;
 
     friend class CSecurityContextManagerResource;
     friend class CSecurityContext;

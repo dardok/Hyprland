@@ -7,6 +7,7 @@
 #include <wayland-server-protocol.h>
 #include "../../helpers/memory/Memory.hpp"
 #include "../../helpers/math/Math.hpp"
+#include <hyprutils/os/FileDescriptor.hpp>
 
 class CWLDataOfferResource;
 class CX11DataOffer;
@@ -24,10 +25,10 @@ class IDataSource {
     IDataSource()          = default;
     virtual ~IDataSource() = default;
 
-    virtual std::vector<std::string> mimes()                                    = 0;
-    virtual void                     send(const std::string& mime, uint32_t fd) = 0;
-    virtual void                     accepted(const std::string& mime)          = 0;
-    virtual void                     cancelled()                                = 0;
+    virtual std::vector<std::string> mimes()                                                          = 0;
+    virtual void                     send(const std::string& mime, Hyprutils::OS::CFileDescriptor fd) = 0;
+    virtual void                     accepted(const std::string& mime)                                = 0;
+    virtual void                     cancelled()                                                      = 0;
     virtual bool                     hasDnd();
     virtual bool                     dndDone();
     virtual void                     sendDndFinished();
@@ -40,11 +41,11 @@ class IDataSource {
     virtual void                     sendDndAction(wl_data_device_manager_dnd_action a);
 
     struct {
-        CSignal destroy;
-    } events;
+        CSignalT<> destroy;
+    } m_events;
 
   private:
-    bool wasUsed = false;
+    bool m_wasUsed = false;
 };
 
 class IDataOffer {

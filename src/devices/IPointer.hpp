@@ -17,9 +17,10 @@ class IPointer : public IHID {
     virtual SP<Aquamarine::IPointer> aq()        = 0;
 
     struct SMotionEvent {
-        uint32_t timeMs = 0;
-        Vector2D delta, unaccel;
-        bool     mouse = false;
+        uint32_t     timeMs = 0;
+        Vector2D     delta, unaccel;
+        bool         mouse = false;
+        SP<IPointer> device;
     };
 
     struct SMotionAbsoluteEvent {
@@ -89,26 +90,30 @@ class IPointer : public IHID {
     };
 
     struct {
-        CSignal motion;
-        CSignal motionAbsolute;
-        CSignal button;
-        CSignal axis;
-        CSignal frame;
+        CSignalT<SMotionEvent>         motion;
+        CSignalT<SMotionAbsoluteEvent> motionAbsolute;
+        CSignalT<SButtonEvent>         button;
+        CSignalT<SAxisEvent>           axis;
+        CSignalT<>                     frame;
 
-        CSignal swipeBegin;
-        CSignal swipeEnd;
-        CSignal swipeUpdate;
+        CSignalT<SSwipeBeginEvent>     swipeBegin;
+        CSignalT<SSwipeEndEvent>       swipeEnd;
+        CSignalT<SSwipeUpdateEvent>    swipeUpdate;
 
-        CSignal pinchBegin;
-        CSignal pinchEnd;
-        CSignal pinchUpdate;
+        CSignalT<SPinchBeginEvent>     pinchBegin;
+        CSignalT<SPinchEndEvent>       pinchEnd;
+        CSignalT<SPinchUpdateEvent>    pinchUpdate;
 
-        CSignal holdBegin;
-        CSignal holdEnd;
-    } pointerEvents;
+        CSignalT<SHoldBeginEvent>      holdBegin;
+        CSignalT<SHoldEndEvent>        holdEnd;
+    } m_pointerEvents;
 
-    bool         connected   = false; // means connected to the cursor
-    std::string  boundOutput = "";
+    bool                 m_connected    = false; // means connected to the cursor
+    std::string          m_boundOutput  = "";
+    bool                 m_flipX        = false; // decide to invert horizontal movement
+    bool                 m_flipY        = false; // decide to invert vertical movement
+    bool                 m_isTouchpad   = false;
+    std::optional<float> m_scrollFactor = {};
 
-    WP<IPointer> self;
+    WP<IPointer>         m_self;
 };

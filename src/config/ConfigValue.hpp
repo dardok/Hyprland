@@ -3,23 +3,20 @@
 #include <string>
 #include <typeindex>
 #include <hyprlang.hpp>
-#include "../debug/Log.hpp"
 #include "../macros.hpp"
-#include "ConfigManager.hpp"
+
+// giga hack to avoid including configManager here
+// NOLINTNEXTLINE
+void            local__configValuePopulate(void* const** p, const std::string& val);
+std::type_index local__configValueTypeIdx(const std::string& val);
 
 template <typename T>
 class CConfigValue {
   public:
     CConfigValue(const std::string& val) {
-        const auto PVHYPRLANG = g_pConfigManager->getHyprlangConfigValuePtr(val);
-
-        // NOLINTNEXTLINE
-        p_ = PVHYPRLANG->getDataStaticPtr();
-
 #ifdef HYPRLAND_DEBUG
         // verify type
-        const auto ANY  = PVHYPRLANG->getValue();
-        const auto TYPE = std::type_index(ANY.type());
+        const auto TYPE = local__configValueTypeIdx(val);
 
         // exceptions
         const bool STRINGEX = (typeid(T) == typeid(std::string) && TYPE == typeid(Hyprlang::STRING));
@@ -27,10 +24,12 @@ class CConfigValue {
 
         RASSERT(typeid(T) == TYPE || STRINGEX || CUSTOMEX, "Mismatched type in CConfigValue<T>, got {} but has {}", typeid(T).name(), TYPE.name());
 #endif
+
+        local__configValuePopulate(&p_, val);
     }
 
     T* ptr() const {
-        return *(T* const*)p_;
+        return *rc<T* const*>(p_);
     }
 
     T operator*() const {
@@ -49,22 +48,22 @@ inline std::string* CConfigValue<std::string>::ptr() const {
 
 template <>
 inline std::string CConfigValue<std::string>::operator*() const {
-    return std::string{*(Hyprlang::STRING*)p_};
+    return std::string{*rc<const Hyprlang::STRING*>(p_)};
 }
 
 template <>
 inline Hyprlang::STRING* CConfigValue<Hyprlang::STRING>::ptr() const {
-    return (Hyprlang::STRING*)p_;
+    return rc<Hyprlang::STRING*>(*p_);
 }
 
 template <>
 inline Hyprlang::STRING CConfigValue<Hyprlang::STRING>::operator*() const {
-    return *(Hyprlang::STRING*)p_;
+    return *rc<const Hyprlang::STRING*>(p_);
 }
 
 template <>
 inline Hyprlang::CUSTOMTYPE* CConfigValue<Hyprlang::CUSTOMTYPE>::ptr() const {
-    return *(Hyprlang::CUSTOMTYPE* const*)p_;
+    return *rc<Hyprlang::CUSTOMTYPE* const*>(p_);
 }
 
 template <>
