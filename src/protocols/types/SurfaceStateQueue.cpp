@@ -21,6 +21,7 @@ void CSurfaceStateQueue::dropState(const WP<SSurfaceState>& state) {
 }
 
 void CSurfaceStateQueue::lock(const WP<SSurfaceState>& weakState, eLockReason reason) {
+    ASSERT(reason != LOCK_REASON_NONE);
     auto it = find(weakState);
     if (it == m_queue.end())
         return;
@@ -29,6 +30,7 @@ void CSurfaceStateQueue::lock(const WP<SSurfaceState>& weakState, eLockReason re
 }
 
 void CSurfaceStateQueue::unlock(const WP<SSurfaceState>& state, eLockReason reason) {
+    ASSERT(reason != LOCK_REASON_NONE);
     auto it = find(state);
     if (it == m_queue.end())
         return;
@@ -38,6 +40,7 @@ void CSurfaceStateQueue::unlock(const WP<SSurfaceState>& state, eLockReason reas
 }
 
 void CSurfaceStateQueue::unlockFirst(eLockReason reason) {
+    ASSERT(reason != LOCK_REASON_NONE);
     for (auto& it : m_queue) {
         if ((it->lockMask & reason) != LOCK_REASON_NONE) {
             it->lockMask &= ~reason;
@@ -63,28 +66,15 @@ auto CSurfaceStateQueue::find(const WP<SSurfaceState>& state) -> std::deque<UP<S
 }
 
 void CSurfaceStateQueue::tryProcess() {
-    if (m_queue.empty())
-        return;
+    while (!m_queue.empty()) {
+        auto& front = m_queue.front();
+        if (front->lockMask & LOCK_REASON_FIFO && !m_surface->m_current.barrierSet)
+            front->lockMask &= ~LOCK_REASON_FIFO;
 
-    auto front = m_queue.begin();
-    if (front->get()->lockMask != LOCK_REASON_NONE)
-        return;
+        if (front->lockMask != LOCK_REASON_NONE)
+            return;
 
-    auto next = std::next(front);
-    if (next == m_queue.end()) {
-        m_surface->commitState(**front);
+        m_surface->commitState(*front);
         m_queue.pop_front();
-        return;
     }
-
-    while (!m_queue.empty() && next != m_queue.end() && next->get()->lockMask == LOCK_REASON_NONE && !next->get()->updated.bits.buffer) {
-        next->get()->updateFrom(**front, true);
-        m_queue.pop_front();
-
-        front = m_queue.begin();
-        next  = std::next(front);
-    }
-
-    m_surface->commitState(**front);
-    m_queue.pop_front();
 }

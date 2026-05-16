@@ -3,7 +3,8 @@
 #include <cstdint>
 #include <type_traits>
 #include <any>
-#include <map>
+#include <ranges>
+#include <algorithm>
 #include "../../config/ConfigValue.hpp"
 
 namespace Desktop::Types {
@@ -25,6 +26,8 @@ namespace Desktop::Types {
         PRIORITY_WORKSPACE_RULE,
         PRIORITY_WINDOW_RULE,
         PRIORITY_SET_PROP,
+
+        PRIORITY_END,
     };
 
     template <typename T>
@@ -32,7 +35,7 @@ namespace Desktop::Types {
         return std::clamp(value, min.value_or(std::numeric_limits<T>::min()), max.value_or(std::numeric_limits<T>::max()));
     }
 
-    template <typename T, bool Extended = std::is_same_v<T, bool> || std::is_same_v<T, Hyprlang::INT> || std::is_same_v<T, Hyprlang::FLOAT>>
+    template <typename T, bool Extended = std::is_same_v<T, bool> || std::is_same_v<T, Config::INTEGER> || std::is_same_v<T, Config::FLOAT>>
     class COverridableVar {
       public:
         COverridableVar(T const& value, eOverridePriority priority) {
@@ -56,11 +59,11 @@ namespace Desktop::Types {
             if (this == &other)
                 return *this;
 
-            for (auto const& value : other.m_values) {
+            for (size_t i = 0; i < PRIORITY_END; ++i) {
                 if constexpr (Extended && !std::is_same_v<T, bool>)
-                    m_values[value.first] = clampOptional(value.second, m_minValue, m_maxValue);
-                else
-                    m_values[value.first] = value.second;
+                    m_values[i] = other.m_values[i].has_value() ? clampOptional(*other.m_values[i], m_minValue, m_maxValue) : other.m_values[i];
+                else if (other.m_values[i].has_value())
+                    m_values[i] = other.m_values[i];
             }
 
             return *this;
@@ -71,18 +74,19 @@ namespace Desktop::Types {
         }
 
         void unset(eOverridePriority priority) {
-            m_values.erase(priority);
+            m_values[priority] = std::nullopt;
         }
 
         bool hasValue() const {
-            return !m_values.empty();
+            return std::ranges::any_of(m_values, [](const auto& e) { return e.has_value(); });
         }
 
         T value() const {
-            if (!m_values.empty())
-                return std::prev(m_values.end())->second;
-            else
-                throw std::bad_optional_access();
+            for (const auto& v : m_values | std::ranges::views::reverse) {
+                if (v)
+                    return *v;
+            }
+            throw std::bad_optional_access();
         }
 
         T valueOr(T const& other) const {
@@ -115,10 +119,12 @@ namespace Desktop::Types {
         }
 
         eOverridePriority getPriority() const {
-            if (!m_values.empty())
-                return std::prev(m_values.end())->first;
-            else
-                throw std::bad_optional_access();
+            for (int i = PRIORITY_END - 1; i >= 0; --i) {
+                if (m_values[i])
+                    return sc<eOverridePriority>(i);
+            }
+
+            throw std::bad_optional_access();
         }
 
         void increment(T const& other, eOverridePriority priority) {
@@ -143,11 +149,11 @@ namespace Desktop::Types {
         }
 
       private:
-        std::map<eOverridePriority, T> m_values;
-        std::optional<T>               m_defaultValue; // used for toggling, so required for bool
-        std::optional<T>               m_minValue;
-        std::optional<T>               m_maxValue;
-        std::any                       m_configValue; // only there for select variables
+        std::array<std::optional<T>, PRIORITY_END> m_values;
+        std::optional<T>                           m_defaultValue; // used for toggling, so required for bool
+        std::optional<T>                           m_minValue;
+        std::optional<T>                           m_maxValue;
+        std::any                                   m_configValue; // only there for select variables
     };
 
 }
